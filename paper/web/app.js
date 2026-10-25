@@ -592,12 +592,14 @@ function renderKpis() {
   const dVal = st.D.weight * st.D.equity;
   const watch = STRATS.map((s) => st[s]).filter((x) => x.state === "flat" && x.next.trend_ok && x.next.width_ok);
   const trig = watch.length ? Math.min(...watch.map((x) => x.next.trigger)) : null;
+  const etas = STRATS.map((s) => st[s]).filter((x) => x.state === "flat" && x.filter && x.filter.clear && x.next.trend_ok).map((x) => x.filter.clear.at);
+  const blockedNote = etas.length ? `濾網擋住；最快預計 ${tstr(Math.min(...etas)).slice(5)} 收盤後解除` : "濾網未通過，暫不進場";
   $("kpis").replaceChildren(
     kpi("S1 部位", s1Val, s1Note, C.s1),
     kpi("D 持有 BTC", pct(st.D.weight, 0, false), `${num(st.D.btc, 4)} BTC · 目標 ${pct(st.D.target, 0, false)} · 子帳戶 ${num(st.D.equity, 0)}`, C.d),
     kpi("總曝險", pct((s1Notional + dVal) / eqNow, 0, false), `S1 ${num(s1Notional, 0)} ＋ D ${num(dVal, 0)} USDT`, null),
     kpi("距 S1 突破價", trig ? pct(trig / price - 1, 1) : "—",
-      trig ? `突破價 ${num(trig, 1)}，下一根 4H 收盤高於它就進場` : s1Long.length ? "S1 持倉中" : "濾網未通過，暫不進場", null),
+      trig ? `突破價 ${num(trig, 1)}，下一根 4H 收盤高於它就進場` : s1Long.length ? "S1 持倉中" : blockedNote, null),
   );
 }
 // ---------------------------------------------------------------- 主視覺
@@ -639,7 +641,16 @@ function renderStatus() {
     parts.push([`${who} 要收盤高於 `, el("span", { class: "hl" }, num(t, 1)), " 才會進場"]);
   }
   for (const s of lg) parts.push([`${s} 持倉中，停損 `, el("span", { class: "hl" }, num(st[s].stop, 1))]);
-  if (!w.length && !lg.length) parts.push("S1 濾網未通過，暫不進場");
+  const bl = STRATS.filter((s) => st[s].state === "flat" && !watching(s));
+  if (bl.length) {                                                        // 被濾網擋住：說明哪個濾網、預計何時解除
+    const trend = bl.some((s) => !st[s].next.trend_ok), width = bl.some((s) => !st[s].next.width_ok);
+    const eta = bl.map((s) => {
+      const c = st[s].filter && st[s].filter.clear;
+      return c && st[s].next.trend_ok ? [`${SHORT[s]} 預計 `, el("span", { class: "hl" }, tstr(c.at).slice(5)), " 收盤後解除"] : [`${SHORT[s]} 暫不進場`];
+    });
+    const lead = `S1 ${bl.length === STRATS.length ? "" : bl.map((s) => SHORT[s]).join("、") + " "}被${trend && width ? "趨勢與盤整寬度" : trend ? "日線 200MA" : "盤整寬度"}濾網擋住：`;
+    parts.push([lead, ...eta.flatMap((x, i) => (i ? ["、", ...x] : x))]);
+  }
   parts.push(`D 維持 BTC ${pct(st.D.weight, 0, false)}`);
   const kids = [];
   parts.forEach((x, i) => kids.push(...[].concat(x), i < parts.length - 1 ? "；" : "。"));
@@ -673,7 +684,7 @@ function renderHero() {
     const x = st[s], isD = s === "D";
     const cap0 = isD ? m.capital * m.weights.D : m.capital * m.weights.S1 / STRATS.length;
     const chg = x.equity / cap0 - 1;
-    let kind = "", pill = "空手", state;
+    let kind = "", pill = "空手", state, gate = null;
     if (isD) {
       kind = "d"; pill = `持有 ${pct(x.weight, 0, false)}`;
       const pend = P.d_orders.find((o) => o.pending);
@@ -688,17 +699,35 @@ function renderHero() {
     } else if (watching(s)) {
       kind = "watch"; pill = "等待突破";
       state = ["觸發價 ", el("b", {}, num(x.next.trigger, 1)), `，距現價 ${pct(x.next.trigger / price - 1, 2)}。${tstr(x.next.bar_close).slice(5)} 收盤高於它就在下一根進場。`];
-    } else {
+    } else if (!x.filter) {                                                  // 舊版 data.js 沒有濾網細節
       const why = [];
       if (!x.next.trend_ok) why.push("日線在 200 日均線下方");
       if (!x.next.width_ok) why.push(`盤整寬度 ${x.next.width_rank.toFixed(2)}，需 ≤ 0.5`);
       state = [`${why.join("、")}，下一根不會進場。`];
+    } else {
+      kind = "blocked"; pill = "濾網擋住";
+      const f = x.filter, nx = x.next, kv = (k, v, c) => el("div", { class: "kv " + (c || "") }, el("span", {}, k), el("b", {}, v));
+      state = [nx.width_ok ? "日線還在 200 日均線下方，" : "盤整還不夠窄，", "下一根不會進場。"];
+      const lines = [];
+      if (!nx.width_ok) lines.push(
+        el("div", { class: "gauge", role: "img", "aria-label": `寬度百分位 ${nx.width_rank.toFixed(2)}，放行門檻 0.5` },
+          el("i", { style: `width:${Math.min(1, nx.width_rank) * 100}%` }), el("b", { style: "left:50%" })),
+        el("div", { class: "gauge-lbl" }, el("span", {}, "窄"), el("span", {}, "放行 ≤ 0.5"), el("span", {}, "寬")),
+        kv("盤整寬度", `${pct(f.width, 2, false)}（百分位 ${nx.width_rank.toFixed(2)}）`),
+        kv("通道", `${num(f.lo, 0)} – ${num(f.hi, 0)}`),
+        kv("解除條件", `寬度 ≤ ${pct(f.thr, 2, false)}（約 ${num(f.thr_usdt, 0)} USDT）`));
+      if (!nx.trend_ok) lines.push(kv("日線 200MA", `前一日 ${num(f.day_close, 0)}，需站上 ${num(f.ma200, 0)}`));
+      if (!nx.width_ok && f.clear) lines.push(
+        kv("預計解除", `${tstr(f.clear.at).slice(5)} 收盤後`, "eta"),
+        el("div", { class: "note" }, `假設之後在現價附近橫盤（每根振幅約 ${num(f.clear.range, 0)}）。屆時突破價約 ${num(f.clear.trigger, 1)}（${pct(f.clear.trigger / price - 1, 1)}），看 ${tstr(f.clear.bar_close).slice(5)} 收盤。`
+          + (nx.trend_ok ? "" : "日線也要站回均線才會進場。")));
+      gate = el("div", { class: "gate" }, ...lines);
     }
     const b = BS[s] || {};
     return el("div", { class: "card tile " + kind, style: `--c:${C.strat[s]}` },
       el("div", { class: "name" }, el("i", { class: "dot" }), isD ? "D · 日線趨勢" : `S1 · ${SHORT[s]}`, el("span", { class: "pillstate" }, pill)),
       el("div", { class: "big" }, num(x.equity, 2), el("small", { class: cls(chg) }, pct(chg, 2))),
-      el("div", { class: "state" }, ...state),
+      el("div", { class: "state" }, ...state), gate,
       el("div", { class: "row" }, el("span", {}, "回測年化 ", el("b", {}, pct(b.cagr))),
         el("span", {}, "Sharpe ", el("b", {}, b.sharpe == null ? "—" : b.sharpe.toFixed(2))),
         el("span", {}, "最大回撤 ", el("b", {}, pct(b.maxdd, 1, false)))));

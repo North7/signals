@@ -162,6 +162,35 @@ def s1_next_bar(k, n, wth=0.5):
     return {"bar_open": nxt, "bar_close": nxt + pd.Timedelta(hours=4), "trigger": hi_next,
             "width_rank": float(wr), "width_ok": bool(wr <= wth), "trend_ok": trend}
 
+def s1_filter_detail(k, n, wth=0.5, steps=60):
+    """濾網擋住時給網頁看的細節：通道上下緣、寬度與放行門檻、前一日日線與 200MA，
+    以及預計解除時間——假設之後每根 4H 都在現價附近、以近 30 根振幅中位數小幅震盪，第幾根收盤後寬度濾網會放行"""
+    W = 6 * 180
+    last = float(k.close.iloc[-1])
+    win = k.iloc[-n:]
+    hi, lo = float(win.high.max()), float(win.low.min())
+    w = (k.high.rolling(n).max().shift(1) - k.low.rolling(n).min().shift(1)) / k.close.shift(1)
+    prev = np.sort(w.iloc[-(W - 1):].dropna().values)            # 下一根的寬度會和這 1079 根一起排名
+    thr = float(prev[int(np.floor(wth * W)) - 1])                 # 下一根寬度要低於它，百分位才會 ≤ wth
+    d = k.close.resample("1D").last()
+    ma = d.rolling(200).mean()
+    day = (k.index[-1] + pd.Timedelta(hours=4)).normalize() - pd.Timedelta(days=1)   # 下一根看的是前一天的日線
+    out = {"hi": hi, "lo": lo, "hi_t": int(win.high.idxmax().timestamp()), "lo_t": int(win.low.idxmin().timestamp()),
+           "width": (hi - lo) / last, "thr": thr, "thr_usdt": thr * last,
+           "day_close": float(d.get(day, np.nan)), "ma200": float(ma.get(day, np.nan)), "clear": None}
+    rng = float((k.high - k.low).iloc[-30:].median())
+    tail = k.iloc[-(W + n + 10):].copy()
+    t = tail.index[-1]
+    for j in range(1, steps + 1):
+        t = t + pd.Timedelta(hours=4)
+        tail.loc[t] = pd.Series({"open": last, "high": last + rng / 2, "low": last - rng / 2, "close": last, "volume": 0.0, "funding": 0.0})
+        nb = s1_next_bar(tail, n, wth)
+        if nb["width_ok"]:
+            out["clear"] = {"bars": j, "at": int(nb["bar_open"].timestamp()), "bar_close": int(nb["bar_close"].timestamp()),
+                            "trigger": nb["trigger"], "rank": nb["width_rank"], "range": rng}
+            break
+    return out
+
 # ---------------------------------------------------------------- D
 def d_signals(k):
     """D 的日線分數與目標倉位，只用已收完的 UTC 日"""
@@ -443,12 +472,22 @@ def main(offline=False, notify=True):
                                 "title": f"{name} 已停損出場 @ {last_exit['exit_px']:,.1f}",
                                 "text": "交易所的止損委託應已觸發賣出；確認這個子帳戶的 BTC 已賣完，並撤掉殘留委託。",
                                 "ref_price": last_exit["exit_px"], "stop": None, "qty": None})
-            why = []
-            if not nb["trend_ok"]: why.append("日線在 200 日均線下方")
-            if not nb["width_ok"]: why.append(f"通道寬度百分位 {nb['width_rank']:.2f} > 0.5")
-            if why:
-                prompts.append({"level": "info", "strat": name, "key": None, "title": f"{name} 空手，下一根不會進場",
-                                "text": "原因：" + "、".join(why) + "。"})
+            if not (nb["trend_ok"] and nb["width_ok"]):
+                fd = s1_filter_detail(k, n)
+                st["filter"] = fd
+                why, cond = [], []
+                if not nb["trend_ok"]:
+                    why.append(f"前一日日線收盤 {fd['day_close']:,.0f} 在 200 日均線 {fd['ma200']:,.0f} 下方")
+                    cond.append(f"日線收盤站回 200 日均線 {fd['ma200']:,.0f} 之上")
+                if not nb["width_ok"]:
+                    why.append(f"盤整寬度 {fd['width']:.2%}（{fd['lo']:,.0f}–{fd['hi']:,.0f}），百分位 {nb['width_rank']:.2f}，需 ≤ 0.5")
+                    cond.append(f"寬度降到 {fd['thr']:.2%}（以現價約 {fd['thr_usdt']:,.0f} USDT）以下")
+                text = "原因：" + "；".join(why) + "。解除條件：" + "，且".join(cond) + "。"
+                c = fd["clear"]
+                if not nb["width_ok"] and c:
+                    text += (f"預計解除：若之後在現價附近橫盤，寬度在 {tw(pd.Timestamp(c['at'], unit='s', tz='UTC'))} 收盤後放行，"
+                             f"接著看 {tw(pd.Timestamp(c['bar_close'], unit='s', tz='UTC'))} 收盤是否高於約 {c['trigger']:,.1f}。")
+                prompts.append({"level": "info", "strat": name, "key": None, "title": f"{name} 空手，下一根不會進場", "text": text})
             else:
                 prompts.append({"level": "watch", "strat": name, "key": None,
                                 "title": f"{name} 空手，等待突破 {nb['trigger']:,.1f}",
