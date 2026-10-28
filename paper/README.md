@@ -47,7 +47,7 @@ cd ~/Documents/Claude\ Code/signals && .venv/bin/python paper/server.py
 ## 檔案
 | 檔案 | 用途 |
 |---|---|
-| `engine.py` | 抓資料、跑策略（啟動時自檢與 `backtest.donchian` 逐根一致）、產生提示、寫 `web/data.js`；S1 被濾網擋住時算出原因、解除條件與預計解除時間（假設之後在現價附近橫盤） |
+| `engine.py` | 抓資料、跑策略（啟動時自檢與 `backtest.donchian` 逐根一致）、產生提示、寫 `web/data.js`；S1 被濾網擋住時算出原因、解除條件與預計解除時間（假設之後在現價附近橫盤）；要進場時若下一根已開盤，直接用開盤價顯示持倉與停損，不必等下一次收盤 |
 | `server.py` | 本機網站與 API（只綁 127.0.0.1；拒絕其他網站來源的請求） |
 | `config.json` | 模式、資金、起算日、權重、K 線顏色 |
 | `web/` | 網頁（「瓷 Porcelain」設計：日間／夜間預設跟隨系統，右上可手動切換並記住；字體 Manrope＋Noto Sans TC 從 Google Fonts 載入；每張圖右上 ⛶ 放大鋪滿視窗，支援的瀏覽器會同時進入系統全螢幕，Esc 離開；K 線圖用 TradingView lightweight-charts 4.2.0，從 unpkg 載入，需要網路） |

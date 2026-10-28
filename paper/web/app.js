@@ -559,7 +559,8 @@ function renderPrompts() {
     }
     if (p.level === "action") {
       let due = null;
-      if (p.key && (p.key.endsWith("|entry") || p.key.endsWith("|stop"))) due = P.meta.next_open;
+      const done = p.key && p.key.endsWith("|entry") && P.status[p.strat] && P.status[p.strat].provisional;   // 已經開盤成交
+      if (p.key && (p.key.endsWith("|entry") || p.key.endsWith("|stop")) && !done) due = P.meta.next_open;
       if (p.key && p.key.endsWith("|rebalance")) { const o = P.d_orders.find((x) => x.pending); due = o ? o.exec_t : null; }
       if (due) card.append(el("div", { class: "due", "data-due": String(due) }));
     }
@@ -627,8 +628,9 @@ function renderStatus() {
   const acts = P.prompts.filter((p) => p.level === "action");
   $("status").classList.toggle("act", acts.length > 0);
   if (acts.length) {
-    $("statusTitle").textContent = acts.length === 1 ? acts[0].title : `有 ${acts.length} 件事要處理`;
-    $("statusText").replaceChildren(...acts.map((p) => el("span", {}, acts.length > 1 ? `${p.title}：` : "", p.text)),
+    const ttl = (p) => { const x = st[p.strat]; return p.key && p.key.endsWith("|entry") && x && x.provisional ? `${p.strat} 已進場，停損 ${num(x.stop, 1)}` : p.title; };
+    $("statusTitle").textContent = acts.length === 1 ? ttl(acts[0]) : `有 ${acts.length} 件事要處理`;
+    $("statusText").replaceChildren(...acts.map((p) => el("span", {}, acts.length > 1 ? `${ttl(p)}：` : "", p.text)),
       el("span", {}, el("a", { href: "#actions" }, "查看操作指令")));
     return;
   }
@@ -690,6 +692,10 @@ function renderHero() {
       const pend = P.d_orders.find((o) => o.pending);
       state = [el("b", {}, num(x.btc, 5)), ` BTC，最新目標 ${pct(x.target, 0, false)}。`,
         pend ? `${tstr(pend.exec_t).slice(5)} 調到 ${pctw(pend.weight_to)}。` : "相差未達 20%，不調倉；每天 08:00 判斷。"];
+    } else if (x.state === "long" && x.provisional) {                         // 這根剛開盤、已用開盤價進場，收盤後才正式記帳
+      kind = "on"; pill = "持倉中";
+      state = [`${tstr(x.entry_t).slice(5)} 開盤以 `, el("b", {}, num(x.entry_px, 1)), " 進場 ", el("b", {}, num(x.btc, 5)),
+        ` BTC，未實現 ${pct(x.unreal, 2)}；停損 `, el("b", {}, num(x.stop, 1)), `（距現價 ${pct(x.stop / price - 1, 1)}）。這根收盤後正式記帳。`];
     } else if (x.state === "long") {
       kind = "on"; pill = "持倉中";
       state = [`持有 `, el("b", {}, num(x.btc, 5)), ` BTC，未實現 ${pct(x.unreal, 2)}；停損 `, el("b", {}, num(x.stop, 1)), `（距現價 ${pct(x.stop / price - 1, 1)}）。`];

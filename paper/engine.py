@@ -88,6 +88,12 @@ def market_now():
         out["price"] = float(t["last"]); out["price_ts"] = int(t["ts"]) // 1000
     except Exception as e:
         out["error"] = str(e)
+    try:                                                      # 進行中的 4H K 線：開盤價就是「下一根開盤成交」的模型成交價
+        b = http_json(f"{API}/market/candles?instId={INST}&bar=4H&limit=1")["data"][0]
+        if b[8] == "0":
+            out["bar"] = {"t": int(b[0]) // 1000, "open": float(b[1]), "high": float(b[2]), "low": float(b[3])}
+    except Exception:
+        pass
     return out
 
 def load_k():
@@ -442,11 +448,19 @@ def main(offline=False, notify=True):
             notional = sub_eq * size_est
             stop_dist = 3 * s["atr"][-1]
             st.update(state="pending", size=size_est, notional=notional, btc=qty_floor(notional / price), stop_dist=stop_dist)
+            bar = mkt.get("bar") or {}
+            filled = bar.get("t") == int(next_open.timestamp())   # 下一根已經開盤：模型已用開盤價成交，網站當下就顯示持倉與停損
+            if filled:
+                px0 = bar["open"]; stop0 = px0 - stop_dist
+                st.update(state="long", provisional=True, entry_t=int(next_open.timestamp()), entry_px=px0, stop=stop0,
+                          btc=qty_floor(notional / px0), unreal=float(price / px0 - 1), stop_dist_pct=float(stop0 / price - 1))
             prompts.append({"level": "action", "strat": name, "key": f"{int(T.timestamp())}|{name}|entry",
                             "title": f"{name} 進場：{tw(next_open)} 開盤市價買進 {st['btc']:.5f} BTC",
                             "text": f"現貨市價買進約 {st['btc']:.5f} BTC（約 {notional:,.0f} USDT，子帳戶的 {size_est:.0%}）。"
-                                    f"成交後立刻掛止損委託：觸發價 = 成交價 − {stop_dist:,.0f}（3×ATR），觸發後市價賣出全部。",
-                            "ref_price": price, "stop": None, "qty": st["btc"]})
+                                    f"成交後立刻掛止損委託：觸發價 = 成交價 − {stop_dist:,.0f}（3×ATR），觸發後市價賣出全部。"
+                                    + (f"模型以 {tw(next_open)} 開盤價 {px0:,.1f} 成交，停損 {stop0:,.1f}；"
+                                       f"你的實際成交價不同時，以「成交價 − {stop_dist:,.0f}」為準。" if filled else ""),
+                            "ref_price": px0 if filled else price, "stop": stop0 if filled else None, "qty": st["btc"]})
         elif s["open"]:
             tr = s["open"]; cur_stop = tr["stops"][-1][1]
             prev_stop = tr["stops"][-2][1] if len(tr["stops"]) > 1 else None
