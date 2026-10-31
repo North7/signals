@@ -335,3 +335,22 @@ for fam in BA["族"].unique():
     print(f"  {fam}：C1 {'✓' if c1 else '✗'}（Δ全期 {s.Δ全期:+.2f}、ΔOOS {s.ΔOOS:+.2f}）"
           + (f"  C2 {'✓' if c2 else '✗'}（{s['勝隨機刪單(全期)']:.0%}）" if c2 is not None else "  C2 不適用")
           + f"  C3 {'✓' if c3 else '✗'}（PR155 全期 {p.全期:.2f}、OOS {p.OOS:.2f}）→ {'候選' if ok else '不通過'}")
+
+# ---------------------------------------------------------------- 事後補充（2026-10-31，只報告、不影響上面的結論）
+# 截圖來自 Daybreak：數值與 bitcoin-data.com 同源（10/29 39.84%）；「異動」= 近 8 天高點到今天的跌幅落在近一年最低 ~1–2%
+print("\n=== 事後補充：Daybreak 的「異動」定義（8 天高點→今天的跌幅在近一年第 2 百分位以下；間隔 ≥14 天；D+2 起算）===")
+bd = pd.read_csv("data/sth_pct_bd.csv", index_col=0, parse_dates=True).iloc[:, 0].reindex(oc.index)
+for nm, x, a in [("STHP（CheckOnChain）", X["STHP"], D_FROM), ("STHP（bitcoin-data，Daybreak 同源）", bd, pd.Timestamp("2023-11-01")),
+                 ("PR155（純價格）", X["PR155"], D_FROM)]:
+    chg = x - x.rolling(8).max()
+    rk = chg.rolling(365, min_periods=200).apply(lambda v: (v[:-1] <= v[-1]).mean(), raw=True)
+    ev, last = [], None
+    for t in rk[(rk <= .02) & (chg < 0)].loc[a:].index:
+        if last is None or (t - last).days >= 14: ev.append(t)
+        last = t
+    ev = pd.DatetimeIndex(ev)
+    print(f"  {nm}：{len(ev)} 次（2024 起 {(ev >= SPLIT).sum()}）")
+    for H in [7, 30, 90]:
+        f = lp.shift(-LAG - H + 1) - lp.shift(-LAG + 1)
+        fe, fa = f.reindex(ev).dropna(), f.loc[a:].dropna()
+        print(f"    {H} 天：平均 {fe.mean():+.1%}／中位 {fe.median():+.1%}／上漲 {(fe > 0).mean():.0%}（所有日子 {fa.mean():+.1%}／{fa.median():+.1%}／{(fa > 0).mean():.0%}）")
