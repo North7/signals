@@ -25,6 +25,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      CF_READY: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}   # 2026-11-11：Cloudflare Pages 並行部署
     outputs:
       changed: ${{ steps.check.outputs.changed }}
       log_saved: ${{ steps.save.outputs.ok }}
@@ -72,6 +74,22 @@ jobs:
         if: steps.check.outputs.changed == 'true'
         with:
           path: paper/web
+      - name: 確認 Cloudflare Pages 專案存在（第一次會建立）
+        if: steps.check.outputs.changed == 'true' && env.CF_READY == 'true'
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages project create signals --production-branch=main
+      - name: 同時部署到 Cloudflare Pages（失敗不影響 GitHub Pages）
+        if: steps.check.outputs.changed == 'true' && env.CF_READY == 'true'
+        continue-on-error: true
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy paper/web --project-name=signals --branch=main --commit-dirty=true
       - name: 保存操作指令紀錄（有新指令才提交推回）
         id: save
         if: steps.state.outcome == 'success'
