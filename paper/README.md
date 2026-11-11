@@ -8,7 +8,7 @@ K 線上的回測與紙上交易進出場、停損線、D 的調倉、資金曲�
 - 預設 20,000 USDT，S1 與 D 各 10,000（S1 內 N20、N30 各 5,000），2026-10-20 起算（`config.json`）
 
 ## 現在的運作方式（全部在雲端，不需要本機電腦）
-網站：**https://north7.github.io/signals/**
+網站：**https://signals.aronlab.dev/**
 
 1. **cron-job.org** 在台灣時間 0/4/8/12/16/20 點過 2 分，呼叫 GitHub API 觸發排程
    （`POST /repos/North7/signals/actions/workflows/pages.yml/dispatches`，內容 `{"ref":"main"}`，
