@@ -187,8 +187,15 @@ function updateK(keepRange) {
   k.candle.setData(k.candles);
   k.ma.setData($("shMA").checked ? P.lines.ma200.map(([t, v]) => ({ time: L(t), value: v })) : []);
   const ch = $("shCh").checked && S.tf === "4h";
-  k.ch20.setData(ch && $("shN20").checked ? P.lines.hi20.map(([t, v]) => ({ time: L(t), value: v })) : []);
-  k.ch30.setData(ch && $("shN30").checked ? P.lines.hi30.map(([t, v]) => ({ time: L(t), value: v })) : []);
+  // 每段是「那一根」要超過的價位；最右邊再補一段下一根的突破價（含剛收盤那根的高點、扣掉滾出區間的舊高點）
+  const chLine = (arr, s) => {
+    const pts = arr.map(([t, v]) => ({ time: L(t), value: v }));
+    const nx = P.status[s] && P.status[s].next;
+    if (nx && nx.trigger) pts.push({ time: L(nx.bar_open), value: nx.trigger }, { time: L(nx.bar_open + H4), value: nx.trigger });
+    return pts;
+  };
+  k.ch20.setData(ch && $("shN20").checked ? chLine(P.lines.hi20, "S1-N20") : []);
+  k.ch30.setData(ch && $("shN30").checked ? chLine(P.lines.hi30, "S1-N30") : []);
   const st = $("shStop").checked;
   k.st20.setData(st && $("shN20").checked ? stopLineData("S1-N20") : []);
   k.st30.setData(st && $("shN30").checked ? stopLineData("S1-N30") : []);
