@@ -9,8 +9,15 @@ const $ = (id) => document.getElementById(id);
 const cssv = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const STRATS = ["S1-N20", "S1-N30"];
 const SHORT = { "S1-N20": "N20", "S1-N30": "N30", D: "D" };
+// 語言：<html data-lang> 由 index.html 開頭決定（網址 ?lang= → 自己選過的 → IP 地區 → 瀏覽器語言）；Z(中文, English)
+const EN = () => document.documentElement.dataset.lang === "en";
+const Z = (zh, en) => (EN() ? en : zh);
+const pTitle = (p) => (EN() && p.en ? p.en.title : p.title);       // 引擎產生的操作指令有中英兩套
+const pText = (p) => (EN() && p.en ? p.en.text : p.text);
+const reasonTxt = (r) => (r === "停損" ? Z("停損", "Stop") : r);
 // D 調倉方向：比例變大 = 加倉，變小 = 減倉（第一次建倉沒有前值，視為加倉）
-const dAct = (o) => (o.weight_from == null || o.weight_to >= o.weight_from ? "加倉" : "減倉");
+const dAdd = (o) => o.weight_from == null || o.weight_to >= o.weight_from;
+const dAct = (o) => (dAdd(o) ? Z("加倉", "Add") : Z("減倉", "Reduce"));
 const pctw = (w) => (w == null ? "—" : Math.round(w * 100) + "%");
 
 // ---------------------------------------------------------------- 格式
@@ -59,7 +66,7 @@ function baseOpts(extra = {}) {
     crosshair: { mode: LC.CrosshairMode.Normal,
                  vertLine: { color: rgba(C.muted, 0.6), labelBackgroundColor: C.surface_3 || C.axis },
                  horzLine: { color: rgba(C.muted, 0.6), labelBackgroundColor: C.surface_3 || C.axis } },
-    localization: { timeFormatter: (t) => fmtShifted(t), priceFormatter: (p) => num(p, Math.abs(p) < 10 ? 3 : 1) },
+    localization: { locale: EN() ? "en-US" : "zh-TW", timeFormatter: (t) => fmtShifted(t), priceFormatter: (p) => num(p, Math.abs(p) < 10 ? 3 : 1) },
   }, extra);
 }
 const candleColors = () => {
@@ -127,7 +134,7 @@ function markerData() {
     const both = g.items.length > 1;
     const color = both ? C.s1 : C.strat[g.items[0].strat];
     const name = both ? "N20+N30" : SHORT[g.items[0].strat];
-    const pre = g.items.some((t) => t.phase === "paper") ? "紙 " : "";
+    const pre = g.items.some((t) => t.phase === "paper") ? Z("紙 ", "Paper ") : "";
     if (g.kind === "in") out.push({ time: g.time, position: "belowBar", color, shape: "arrowUp", text: txt ? pre + name : "" });
     else {
       const r = g.items.reduce((a, t) => a + t.ret_acct, 0) / g.items.length;
@@ -136,13 +143,13 @@ function markerData() {
   }
   if (show.D) for (const o of P.d_orders) {
     if (o.pending) continue;
-    const add = dAct(o) === "加倉";
+    const add = dAdd(o);
     out.push({ time: bucket(o.exec_t), position: add ? "belowBar" : "aboveBar", color: C.d, shape: add ? "arrowUp" : "arrowDown",
                text: txt ? `D ${dAct(o)}→${pctw(o.weight_to)}` : "" });
   }
   const st = P.meta.start;
   if (st >= P.candles[0][0] && st <= P.meta.last_bar + H4)
-    out.push({ time: bucket(Math.min(st, P.meta.last_bar)), position: "aboveBar", color: C.ink, shape: "square", text: "紙上交易開始" });
+    out.push({ time: bucket(Math.min(st, P.meta.last_bar)), position: "aboveBar", color: C.ink, shape: "square", text: Z("紙上交易開始", "Paper trading starts") });
   return out.sort((a, b) => a.time - b.time);
 }
 // 每根 K 線上發生的事件（hover 說明用）
@@ -150,10 +157,12 @@ function eventIndex() {
   const m = new Map();
   const add = (t, s) => { const k = bucket(t); m.set(k, (m.get(k) || []).concat(s)); };
   for (const tr of P.trades) {
-    add(tr.entry_t, `${tr.strat} 進場 @ ${num(tr.entry_px, 1)}（${num(tr.btc, 5)} BTC，子帳戶的 ${pct(tr.size, 0, false)}）`);
-    if (tr.exit_t) add(tr.exit_t, `${tr.strat} 出場 @ ${num(tr.exit_px, 1)}，帳戶 ${pct(tr.ret_acct)}`);
+    add(tr.entry_t, Z(`${tr.strat} 進場 @ ${num(tr.entry_px, 1)}（${num(tr.btc, 5)} BTC，子帳戶的 ${pct(tr.size, 0, false)}）`,
+                      `${tr.strat} entry @ ${num(tr.entry_px, 1)} (${num(tr.btc, 5)} BTC, ${pct(tr.size, 0, false)} of the sub-account)`));
+    if (tr.exit_t) add(tr.exit_t, Z(`${tr.strat} 出場 @ ${num(tr.exit_px, 1)}，帳戶 ${pct(tr.ret_acct)}`, `${tr.strat} exit @ ${num(tr.exit_px, 1)}, account ${pct(tr.ret_acct)}`));
   }
-  for (const o of P.d_orders) if (!o.pending) add(o.exec_t, `D ${dAct(o)}：BTC 比例 ${pctw(o.weight_from)} → ${pctw(o.weight_to)} @ ${num(o.px, 1)}`);
+  for (const o of P.d_orders) if (!o.pending) add(o.exec_t, Z(`D ${dAct(o)}：BTC 比例 ${pctw(o.weight_from)} → ${pctw(o.weight_to)} @ ${num(o.px, 1)}`,
+                                                             `D ${dAct(o)}: BTC weight ${pctw(o.weight_from)} → ${pctw(o.weight_to)} @ ${num(o.px, 1)}`));
   return m;
 }
 
@@ -207,14 +216,15 @@ function updateK(keepRange) {
   for (const s of STRATS) {
     const x = P.status[s];
     if (!x || !$(s === "S1-N20" ? "shN20" : "shN30").checked) continue;
-    if (x.state === "long") k.priceLines.push(k.candle.createPriceLine({ price: x.stop, color: C.strat[s], lineWidth: 1, lineStyle: LC.LineStyle.Dashed, axisLabelVisible: true, title: `${SHORT[s]} 停損` }));
+    if (x.state === "long") k.priceLines.push(k.candle.createPriceLine({ price: x.stop, color: C.strat[s], lineWidth: 1, lineStyle: LC.LineStyle.Dashed, axisLabelVisible: true, title: `${SHORT[s]} ${Z("停損", "stop")}` }));
     else if (x.state === "flat" && x.next.trend_ok && x.next.width_ok)
-      k.priceLines.push(k.candle.createPriceLine({ price: x.next.trigger, color: C.strat[s], lineWidth: 1, lineStyle: LC.LineStyle.SparseDotted, axisLabelVisible: true, title: `${SHORT[s]} 突破價` }));
+      k.priceLines.push(k.candle.createPriceLine({ price: x.next.trigger, color: C.strat[s], lineWidth: 1, lineStyle: LC.LineStyle.SparseDotted, axisLabelVisible: true, title: `${SHORT[s]} ${Z("突破價", "breakout")}` }));
   }
   if (vr) k.chart.timeScale().setVisibleRange(vr); else setRange(S.range);
   const keys = $("kkeys"); keys.replaceChildren(
-    keyItem(C.s1, "S1-N20 進出／停損", "tri"), keyItem(C.s1b, "S1-N30 進出／停損", "tri"), keyItem(C.d, "D 加倉 ▲／減倉 ▼"),
-    keyItem(C.ink_2, "200 日均線（前一日）", "dash"), keyItem(rgba(C.s1, .55), "通道上緣（突破價）"));
+    keyItem(C.s1, Z("S1-N20 進出／停損", "S1-N20 entries, exits, stop"), "tri"), keyItem(C.s1b, Z("S1-N30 進出／停損", "S1-N30 entries, exits, stop"), "tri"),
+    keyItem(C.d, Z("D 加倉 ▲／減倉 ▼", "D add ▲ / reduce ▼")),
+    keyItem(C.ink_2, Z("200 日均線（前一日）", "200-day MA (previous day)"), "dash"), keyItem(rgba(C.s1, .55), Z("通道上緣（突破價）", "Channel high (breakout price)")));
   kLegend({});
 }
 function keyItem(color, label, kind) {
@@ -234,7 +244,8 @@ function kLegend(p) {
   if (!bar) { bar = k.candles[k.candles.length - 1]; t = bar && bar.time; }
   if (!bar) return;
   const chg = bar.close / bar.open - 1;
-  const parts = [el("b", {}, fmtShifted(t)), `  開 ${num(bar.open, 1)}  高 ${num(bar.high, 1)}  低 ${num(bar.low, 1)}  收 `,
+  const parts = [el("b", {}, fmtShifted(t)), Z(`  開 ${num(bar.open, 1)}  高 ${num(bar.high, 1)}  低 ${num(bar.low, 1)}  收 `,
+                                                `  O ${num(bar.open, 1)}  H ${num(bar.high, 1)}  L ${num(bar.low, 1)}  C `),
     el("b", {}, num(bar.close, 1)), el("span", { class: cls(chg) }, `  ${pct(chg, 2)}`)];
   const ma = p && p.seriesData && p.seriesData.get(k.ma);
   if (ma && ma.value) parts.push(`  ｜ 200MA ${num(ma.value, 0)}`);
@@ -260,19 +271,19 @@ function eqSet() {
            d: toPts(e.D), btc: toPts(e.btc) };
 }
 function initEq() {
-  const ch = LC.createChart($("eqchart"), baseOpts({ localization: { timeFormatter: (t) => fmtShifted(t, false), priceFormatter: (p) => num(p, 0) } }));
+  const ch = LC.createChart($("eqchart"), baseOpts({ localization: { locale: EN() ? "en-US" : "zh-TW", timeFormatter: (t) => fmtShifted(t, false), priceFormatter: (p) => num(p, 0) } }));
   const line = (color, w, style) => ch.addLineSeries({ color, lineWidth: w, lineStyle: style || 0, priceLineVisible: false, lastValueVisible: true });
   const eq = { chart: ch, btc: line(C.btc, 1, LC.LineStyle.Dashed), d: line(C.d, 2), s1: line(C.s1, 2),
                total: ch.addAreaSeries({ lineColor: C.total, topColor: rgba(C.total, 0.16), bottomColor: rgba(C.total, 0.0), lineWidth: 3,
                                          priceLineVisible: false, lastValueVisible: true }) };
   ch.subscribeCrosshairMove((p) => eqLegend(p));
   charts.eq = eq;
-  const dd = LC.createChart($("ddchart"), baseOpts({ localization: { timeFormatter: (t) => fmtShifted(t, false), priceFormatter: (p) => (p * 100).toFixed(0) + "%" } }));
+  const dd = LC.createChart($("ddchart"), baseOpts({ localization: { locale: EN() ? "en-US" : "zh-TW", timeFormatter: (t) => fmtShifted(t, false), priceFormatter: (p) => (p * 100).toFixed(0) + "%" } }));
   const dl = (color, w, style) => dd.addLineSeries({ color, lineWidth: w, lineStyle: style || 0, priceLineVisible: false, lastValueVisible: false });
   // 後加的畫在上層：BTC 參考線在最底，組合在最上
   charts.dd = { chart: dd, btc: dl(C.btc, 1, LC.LineStyle.Dashed), d: dl(C.d, 2), s1: dl(C.s1, 2), total: dl(C.total, 2), min: {} };
   dd.subscribeCrosshairMove((p) => ddLegend(p));
-  const ex = LC.createChart($("expchart"), baseOpts({ localization: { timeFormatter: (t) => fmtShifted(t, false), priceFormatter: (p) => (p * 100).toFixed(0) + "%" } }));
+  const ex = LC.createChart($("expchart"), baseOpts({ localization: { locale: EN() ? "en-US" : "zh-TW", timeFormatter: (t) => fmtShifted(t, false), priceFormatter: (p) => (p * 100).toFixed(0) + "%" } }));
   charts.exp = { chart: ex,
     tot: ex.addLineSeries({ color: C.total, lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
     d: ex.addAreaSeries({ lineColor: C.d, topColor: rgba(C.d, 0.30), bottomColor: rgba(C.d, 0.05), lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
@@ -280,8 +291,8 @@ function initEq() {
   ex.subscribeCrosshairMove((p) => {
     const g = (s) => (p.time ? p.seriesData.get(s) : null);
     const a = g(charts.exp.s1), b = g(charts.exp.d), c = g(charts.exp.tot);
-    $("explegend").replaceChildren(p.time && c ? el("span", {}, fmtShifted(p.time, false) + "  合計 ", el("b", {}, pct(c.value, 0, false)),
-      `  S1 ${pct(a ? a.value : 0, 0, false)}  D ${pct(b ? b.value : 0, 0, false)}`) : el("span", {}, "S1 名目＋D 持有的 BTC，佔總資金比例"));
+    $("explegend").replaceChildren(p.time && c ? el("span", {}, fmtShifted(p.time, false) + Z("  合計 ", "  Total "), el("b", {}, pct(c.value, 0, false)),
+      `  S1 ${pct(a ? a.value : 0, 0, false)}  D ${pct(b ? b.value : 0, 0, false)}`) : el("span", {}, Z("S1 名目＋D 持有的 BTC，佔總資金比例", "S1 notional plus D's BTC, as a share of total capital")));
   });
   // 三張圖的時間軸連動
   let lock = false;
@@ -310,25 +321,27 @@ function updateEq() {
     charts.dd.min[k] = mn;
     charts.dd[k].setData(k === "btc" && !$("ddBtc").checked ? [] : d);
   }
-  const mx = (k) => ` 最大 ${pct(charts.dd.min[k], 1, false)}`;
-  $("ddkeys").replaceChildren(keyItem(C.total, "組合" + mx("total")), keyItem(C.s1, "S1（N20＋N30）" + mx("s1")), keyItem(C.d, "D" + mx("d")),
-    ...($("ddBtc").checked ? [keyItem(C.btc, "BTC 持有" + mx("btc"), "dash")] : []));
+  const mx = (k) => ` ${Z("最大", "max")} ${pct(charts.dd.min[k], 1, false)}`;
+  $("ddkeys").replaceChildren(keyItem(C.total, Z("組合", "Combined") + mx("total")), keyItem(C.s1, Z("S1（N20＋N30）", "S1 (N20 + N30)") + mx("s1")), keyItem(C.d, "D" + mx("d")),
+    ...($("ddBtc").checked ? [keyItem(C.btc, Z("BTC 持有", "BTC buy & hold") + mx("btc"), "dash")] : []));
   ddLegend({});
   // 曝險（全期，紙上模式只看起算之後）
   const ex = P.exposure.filter((x) => S.eq !== "paper" || x[0] >= P.meta.start);
   charts.exp.s1.setData(ex.map(([t, a]) => ({ time: L(t), value: a })));
   charts.exp.d.setData(ex.map(([t, , b]) => ({ time: L(t), value: b })));
   charts.exp.tot.setData(ex.map(([t, a, b]) => ({ time: L(t), value: a + b })));
-  $("expkeys").replaceChildren(keyItem(C.total, "合計"), keyItem(C.s1, "S1 名目"), keyItem(C.d, "D 持有 BTC"));
-  $("eqkeys").replaceChildren(keyItem(C.total, "組合"), keyItem(C.s1, "S1（N20＋N30）"), keyItem(C.d, "D"), keyItem(C.btc, "BTC 持有（同資金）", "dash"));
+  $("expkeys").replaceChildren(keyItem(C.total, Z("合計", "Total")), keyItem(C.s1, Z("S1 名目", "S1 notional")), keyItem(C.d, Z("D 持有 BTC", "D's BTC")));
+  $("eqkeys").replaceChildren(keyItem(C.total, Z("組合", "Combined")), keyItem(C.s1, Z("S1（N20＋N30）", "S1 (N20 + N30)")), keyItem(C.d, "D"),
+    keyItem(C.btc, Z("BTC 持有（同資金）", "BTC buy & hold (same capital)"), "dash"));
   if (empty) $("eqlegend").replaceChildren(el("span", {}, S.eq === "paper"
-    ? `紙上／實盤帳戶自 ${tstr(P.meta.start, false)} 起算，累積到第二天後才會有曲線。` : "沒有資料"));
+    ? Z(`紙上／實盤帳戶自 ${tstr(P.meta.start, false)} 起算，累積到第二天後才會有曲線。`, `The paper / live account starts on ${tstr(P.meta.start, false)}; the curve appears from the second day.`)
+    : Z("沒有資料", "No data")));
   else eqLegend({});
   for (const c of [charts.dd.chart, charts.exp.chart]) c.timeScale().fitContent();
 }
 function ddLegend(p) {
   const dd = charts.dd, showBtc = $("ddBtc").checked;
-  const items = [["total", "組合", C.total], ["s1", "S1", C.s1], ["d", "D", C.d]].concat(showBtc ? [["btc", "BTC", C.btc]] : []);
+  const items = [["total", Z("組合", "Combined"), C.total], ["s1", "S1", C.s1], ["d", "D", C.d]].concat(showBtc ? [["btc", "BTC", C.btc]] : []);
   const key = (color) => el("i", { style: `display:inline-block;width:12px;height:2px;background:${color};vertical-align:middle;margin-right:4px` });
   if (p && p.time) {
     const row = items.map(([k, label, color]) => {
@@ -337,7 +350,7 @@ function ddLegend(p) {
     });
     $("ddlegend").replaceChildren(el("b", { style: "margin-right:12px" }, fmtShifted(p.time, false)), ...row);
   } else {
-    $("ddlegend").replaceChildren(el("span", {}, "把滑鼠移到圖上，查看當天各策略離高點多遠"));
+    $("ddlegend").replaceChildren(el("span", {}, Z("把滑鼠移到圖上，查看當天各策略離高點多遠", "Hover the chart to see how far each strategy was below its high that day")));
   }
 }
 function eqLegend(p) {
@@ -354,7 +367,7 @@ function eqLegend(p) {
       label + " ", el("b", {}, num(v, 0)), ` (${pct(v / (k === "total" || k === "btc" ? base : e[k][0].value) - 1, 0)})`);
   };
   $("eqlegend").replaceChildren(el("div", {}, el("b", {}, fmtShifted(t, false))),
-    el("div", {}, row("total", "組合", C.total), row("s1", "S1", C.s1), row("d", "D", C.d), row("btc", "BTC", C.btc)));
+    el("div", {}, row("total", Z("組合", "Combined"), C.total), row("s1", "S1", C.s1), row("d", "D", C.d), row("btc", "BTC", C.btc)));
 }
 
 // ---------------------------------------------------------------- 自製長條圖與熱力圖
@@ -376,17 +389,17 @@ function barPath(x, y0, y1, w, r) {          // 只有資料端圓角，基線�
 function renderYearly() {
   const box = $("yearly"); box.replaceChildren();
   const Y = P.stats.yearly, years = Object.keys(Y.total);
-  const ser = [["組合", Y.total, C.total], ["S1", Y.S1, C.s1], ["D", Y.D, C.d]];
+  const ser = [[Z("組合", "Combined"), Y.total, C.total], ["S1", Y.S1, C.s1], ["D", Y.D, C.d]];
   const W = Math.max(box.clientWidth, 320), Ht = fsHeight(box, 260), pl = 44, pb = 40, pt = 14;
   const vals = ser.flatMap(([, s]) => years.map((y) => s[y] || 0));
   const hi = Math.max(0.1, ...vals), lo = Math.min(-0.05, ...vals);
   const yv = (v) => pt + (hi - v) / (hi - lo) * (Ht - pt - pb);
-  const svg = sv("svg", { viewBox: `0 0 ${W} ${Ht}`, height: Ht, role: "img", "aria-label": "逐年報酬長條圖" });
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${Ht}`, height: Ht, role: "img", "aria-label": Z("逐年報酬長條圖", "Yearly returns bar chart") });
   for (const g of niceTicks(lo, hi, 5)) {
     svg.append(sv("line", { x1: pl, x2: W, y1: yv(g), y2: yv(g), stroke: g === 0 ? C.axis : C.grid, "stroke-width": 1 }));
     const tx = sv("text", { x: pl - 6, y: yv(g) + 4, "text-anchor": "end" }); tx.textContent = Math.round(g * 100) + "%"; svg.append(tx);
   }
-  const gw = (W - pl) / years.length, bw = Math.min(18, (gw - 14) / ser.length - 2);
+  const gw = (W - pl) / years.length, bw = Math.min(18, (gw - 14) / ser.length - 2), narrow = gw < 66;
   years.forEach((y, i) => {
     const gx = pl + i * gw + (gw - (bw + 2) * ser.length) / 2;
     ser.forEach(([name, s, color], j) => {
@@ -400,10 +413,11 @@ function renderYearly() {
       if (j === 0) { const t = sv("text", { x: x + bw / 2, y: v >= 0 ? yv(v) - 4 : yv(v) + 12, "text-anchor": "middle", class: "val" }); t.textContent = Math.round(v * 100) + "%"; svg.append(t); }
     });
     const lab = sv("text", { x: pl + i * gw + gw / 2, y: Ht - pb + 15, "text-anchor": "middle" }); lab.textContent = y; svg.append(lab);
-    const b = sv("text", { x: pl + i * gw + gw / 2, y: Ht - pb + 29, "text-anchor": "middle" }); b.textContent = "BTC " + pct(Y.btc[y], 0); svg.append(b);
+    const b = sv("text", { x: pl + i * gw + gw / 2, y: Ht - pb + 29, "text-anchor": "middle" }); b.textContent = (narrow ? "" : "BTC ") + pct(Y.btc[y], 0); svg.append(b);
   });
+  if (narrow) { const t = sv("text", { x: pl - 6, y: Ht - pb + 29, "text-anchor": "end" }); t.textContent = "BTC"; svg.append(t); }   // 手機：BTC 只標在左邊一次，避免互相重疊
   box.append(svg);
-  $("ykeys").replaceChildren(keyItem(C.total, "組合"), keyItem(C.s1, "S1"), keyItem(C.d, "D"));
+  $("ykeys").replaceChildren(keyItem(C.total, Z("組合", "Combined")), keyItem(C.s1, "S1"), keyItem(C.d, "D"));
 }
 function niceTicks(lo, hi, n) {
   const span = hi - lo, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
@@ -420,8 +434,9 @@ function renderHeat() {
   const box = $("heat"); box.replaceChildren();
   const g = el("div", { class: "heat" });
   g.append(el("div", { class: "h" }, ""));
-  for (let m = 1; m <= 12; m++) g.append(el("div", { class: "h" }, m + "月"));
-  g.append(el("div", { class: "h" }, "全年"));
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  for (let m = 1; m <= 12; m++) g.append(el("div", { class: "h" }, el("span", { class: "lg" }, Z(m + "月", MON[m - 1])), el("span", { class: "sm" }, Z(String(m), MON[m - 1][0]))));
+  g.append(el("div", { class: "h" }, Z("全年", "Year")));
   const by = {};
   for (const [y, m, v] of P.stats.monthly) (by[y] = by[y] || {})[m] = v;
   for (const y of Object.keys(by)) {
@@ -431,7 +446,7 @@ function renderHeat() {
       if (v == null) { g.append(el("div", {}, "")); continue; }
       const c = heatColor(v);
       const cell = el("div", { class: "c", style: `background:${c.bg};color:${c.fg}` }, (v * 100).toFixed(0));
-      cell.addEventListener("pointermove", (ev) => showTip(ev, [el("div", {}, `${y} 年 ${m} 月`), el("div", {}, el("b", {}, pct(v)), " 組合")]));
+      cell.addEventListener("pointermove", (ev) => showTip(ev, [el("div", {}, Z(`${y} 年 ${m} 月`, `${MON[m - 1]} ${y}`)), el("div", {}, el("b", {}, pct(v)), Z(" 組合", " combined"))]));
       cell.addEventListener("pointerleave", hideTip);
       g.append(cell);
     }
@@ -448,7 +463,7 @@ function renderPnl() {
   const W = Math.max(box.clientWidth, 320), Ht = fsHeight(box, 230), pl = 44, pb = 24, pt = 10;
   const hi = Math.max(0.02, ...tr.map((t) => t.ret_acct)), lo = Math.min(-0.02, ...tr.map((t) => t.ret_acct));
   const yv = (v) => pt + (hi - v) / (hi - lo) * (Ht - pt - pb);
-  const svg = sv("svg", { viewBox: `0 0 ${W} ${Ht}`, height: Ht, role: "img", "aria-label": "S1 逐筆損益" });
+  const svg = sv("svg", { viewBox: `0 0 ${W} ${Ht}`, height: Ht, role: "img", "aria-label": Z("S1 逐筆損益", "S1 profit and loss per trade") });
   for (const g of niceTicks(lo, hi, 4)) {
     svg.append(sv("line", { x1: pl, x2: W, y1: yv(g), y2: yv(g), stroke: g === 0 ? C.axis : C.grid }));
     const t = sv("text", { x: pl - 6, y: yv(g) + 4, "text-anchor": "end" }); t.textContent = Math.round(g * 100) + "%"; svg.append(t);
@@ -461,10 +476,10 @@ function renderPnl() {
     if (t.phase === "paper") { p.setAttribute("stroke", C.ink); p.setAttribute("stroke-width", "1"); }
     const hit = sv("rect", { x: pl + i * bw, y: pt, width: Math.max(bw, 3), height: Ht - pt - pb, fill: "transparent", style: "cursor:pointer" });
     hit.addEventListener("pointermove", (ev) => showTip(ev, [
-      el("div", { class: "r" }, el("i", { style: `background:${C.strat[t.strat]}` }), t.strat + (t.phase === "paper" ? "（紙上）" : "")),
-      el("div", {}, el("b", {}, pct(t.ret_acct)), ` 帳戶 · ${num(t.pnl, 0)} USDT`),
+      el("div", { class: "r" }, el("i", { style: `background:${C.strat[t.strat]}` }), t.strat + (t.phase === "paper" ? Z("（紙上）", " (paper)") : "")),
+      el("div", {}, el("b", {}, pct(t.ret_acct)), Z(` 帳戶 · ${num(t.pnl, 0)} USDT`, ` account · ${num(t.pnl, 0)} USDT`)),
       el("div", { style: "color:var(--muted)" }, `${tstr(t.entry_t)} → ${tstr(t.exit_t)}`),
-      el("div", { style: "color:var(--muted)" }, `價格 ${pct(t.ret_px)} · 子帳戶的 ${pct(t.size, 0, false)}`)]));
+      el("div", { style: "color:var(--muted)" }, Z(`價格 ${pct(t.ret_px)} · 子帳戶的 ${pct(t.size, 0, false)}`, `price ${pct(t.ret_px)} · ${pct(t.size, 0, false)} of the sub-account`))]));
     hit.addEventListener("pointerleave", hideTip);
     hit.addEventListener("click", () => zoomTo(t.entry_t, t.exit_t));
     svg.append(p, hit);
@@ -485,8 +500,10 @@ function table(id, head, rows) {
 }
 function renderStats() {
   const B = P.stats.backtest, Pp = P.stats.paper, T = P.stats.trades_bt;
-  const names = [["組合", "total"], ["S1 合計", "S1"], ["　S1-N20", "S1-N20"], ["　S1-N30", "S1-N30"], ["D", "D"], ["BTC 持有", "btc"]];
-  const head = [["", true], ["回測 總報酬"], ["年化"], ["Sharpe"], ["最大回撤"], ["紙上 總報酬"], ["紙上 最大回撤"], ["交易數"], ["勝率"], ["平均賺"], ["平均賠"], ["盈虧比"], ["持有中位（天）"]];
+  const names = [[Z("組合", "Combined"), "total"], [Z("S1 合計", "S1 total"), "S1"], ["　S1-N20", "S1-N20"], ["　S1-N30", "S1-N30"], ["D", "D"], [Z("BTC 持有", "BTC buy & hold"), "btc"]];
+  const head = [["", true], [Z("回測 總報酬", "Backtest total return")], [Z("年化", "CAGR")], ["Sharpe"], [Z("最大回撤", "Max drawdown")], [Z("紙上 總報酬", "Paper total return")],
+    [Z("紙上 最大回撤", "Paper max drawdown")], [Z("交易數", "Trades")], [Z("勝率", "Win rate")], [Z("平均賺", "Avg win")], [Z("平均賠", "Avg loss")],
+    [Z("盈虧比", "Profit factor")], [Z("持有中位（天）", "Median hold (days)")]];
   const rows = names.map(([label, k]) => {
     const b = B[k] || {}, p = Pp ? Pp[k] : null, ts = T[k] || null;
     return el("tr", {}, el("td", { class: "l" }, label), el("td", { class: cls(b.total) }, pct(b.total, 0)), el("td", {}, pct(b.cagr)),
@@ -502,24 +519,27 @@ function renderTrades() {
   $("fStrat").style.display = S.tradeTab === "s1" ? "" : "none";
   if (S.tradeTab === "s1") {
     const list = P.trades.filter((t) => (!fs || t.strat === fs) && (!fp || t.phase === fp)).sort((a, b) => b.entry_t - a.entry_t);
-    $("tradeCount").textContent = `${list.length} 筆`;
-    table("tradeTable", [["策略", true], ["階段", true], ["進場（台灣）", true], ["進場價"], ["出場（台灣）", true], ["出場價"], ["佔子帳戶"], ["BTC"], ["金額 USDT"], ["價格漲跌"], ["帳戶損益"], ["損益 USDT"], ["持有（天）"], ["狀態", true]],
+    $("tradeCount").textContent = Z(`${list.length} 筆`, `${list.length} trades`);
+    table("tradeTable", [[Z("策略", "Strategy"), true], [Z("階段", "Phase"), true], [Z("進場（台灣）", "Entry (Taiwan)"), true], [Z("進場價", "Entry price")],
+      [Z("出場（台灣）", "Exit (Taiwan)"), true], [Z("出場價", "Exit price")], [Z("佔子帳戶", "Size")], ["BTC"], [Z("金額 USDT", "Notional USDT")], [Z("價格漲跌", "Price move")],
+      [Z("帳戶損益", "Account P&L")], [Z("損益 USDT", "P&L USDT")], [Z("持有（天）", "Held (days)")], [Z("狀態", "Status"), true]],
       list.map((t) => el("tr", { class: "click", onclick: () => zoomTo(t.entry_t, t.exit_t || P.meta.last_bar) },
         el("td", { class: "l" }, el("i", { style: `display:inline-block;width:10px;height:2px;background:${C.strat[t.strat]};vertical-align:middle;margin-right:5px` }), t.strat),
-        el("td", { class: "l" }, el("span", { class: "pill " + (t.phase === "paper" ? "paper" : "") }, t.phase === "paper" ? "紙上" : "回測")),
+        el("td", { class: "l" }, el("span", { class: "pill " + (t.phase === "paper" ? "paper" : "") }, t.phase === "paper" ? Z("紙上", "Paper") : Z("回測", "Backtest"))),
         el("td", { class: "l" }, tstr(t.entry_t)), el("td", {}, num(t.entry_px, 1)),
         el("td", { class: "l" }, t.exit_t ? tstr(t.exit_t) : "—"), el("td", {}, num(t.exit_px, 1)),
         el("td", {}, pct(t.size, 0, false)), el("td", {}, num(t.btc, 5)), el("td", {}, num(t.notional, 0)),
         el("td", { class: cls(t.ret_px) }, pct(t.ret_px)), el("td", { class: cls(t.ret_acct) }, pct(t.ret_acct, 2)),
         el("td", { class: cls(t.pnl) }, num(t.pnl, 0)), el("td", {}, (t.hold_h / 24).toFixed(1)),
-        el("td", { class: "l" }, t.open ? el("span", { class: "pill open" }, "持倉中") : t.reason))));
+        el("td", { class: "l" }, t.open ? el("span", { class: "pill open" }, Z("持倉中", "Open")) : reasonTxt(t.reason)))));
   } else {
     const list = P.d_orders.filter((o) => !fp || o.phase === fp).sort((a, b) => b.exec_t - a.exec_t);
-    $("tradeCount").textContent = `${list.length} 次`;
-    table("tradeTable", [["階段", true], ["動作", true], ["訊號日（UTC 收盤）", true], ["成交（台灣）", true], ["成交價"], ["BTC 比例"], ["變動"], ["分數"]],
+    $("tradeCount").textContent = Z(`${list.length} 次`, `${list.length} rebalances`);
+    table("tradeTable", [[Z("階段", "Phase"), true], [Z("動作", "Action"), true], [Z("訊號日（UTC 收盤）", "Signal day (UTC close)"), true], [Z("成交（台灣）", "Filled (Taiwan)"), true],
+      [Z("成交價", "Fill price")], [Z("BTC 比例", "BTC weight")], [Z("變動", "Change")], [Z("分數", "Score")]],
       list.map((o) => el("tr", { class: "click", onclick: () => zoomTo(o.exec_t, o.exec_t) },
-        el("td", { class: "l" }, el("span", { class: "pill " + (o.phase === "paper" ? "paper" : "") }, o.pending ? "待執行" : o.phase === "paper" ? "紙上" : "回測")),
-        el("td", { class: "l" }, (dAct(o) === "加倉" ? "▲ " : "▼ ") + dAct(o)),
+        el("td", { class: "l" }, el("span", { class: "pill " + (o.phase === "paper" ? "paper" : "") }, o.pending ? Z("待執行", "Pending") : o.phase === "paper" ? Z("紙上", "Paper") : Z("回測", "Backtest"))),
+        el("td", { class: "l" }, (dAdd(o) ? "▲ " : "▼ ") + dAct(o)),
         el("td", { class: "l" }, fmtShifted(o.signal_t, false)), el("td", { class: "l" }, tstr(o.exec_t)), el("td", {}, num(o.px, 1)),
         el("td", {}, `${pctw(o.weight_from)} → ${pctw(o.weight_to)}`),
         el("td", {},
@@ -529,40 +549,44 @@ function renderTrades() {
 }
 function renderLog() {
   const rows = [...P.log].reverse().map((r) => el("tr", {}, el("td", { class: "l" }, r.logged_at), el("td", { class: "l" }, r.strat),
-    el("td", { class: "l" }, r.title), el("td", { class: "wrap" }, r.text), el("td", { class: "l" }, r.mode === "live" ? "實盤" : "紙上")));
-  table("logTable", [["時間（台灣）", true], ["策略", true], ["指令", true], ["內容", true], ["模式", true]],
-    rows.length ? rows : [el("tr", {}, el("td", { class: "l", colspan: 5 }, "還沒有發出過操作指令。每根 4H 收盤後更新時，新的指令會記在這裡。"))]);
+    el("td", { class: "l" }, r.title), el("td", { class: "wrap" }, r.text), el("td", { class: "l" }, r.mode === "live" ? Z("實盤", "Live") : Z("紙上", "Paper"))));
+  table("logTable", [[Z("時間（台灣）", "Time (Taiwan)"), true], [Z("策略", "Strategy"), true], [Z("指令", "Instruction"), true], [Z("內容", "Details"), true], [Z("模式", "Mode"), true]],
+    rows.length ? rows : [el("tr", {}, el("td", { class: "l", colspan: 5 }, Z("還沒有發出過操作指令。每根 4H 收盤後更新時，新的指令會記在這裡。",
+      "No instructions sent yet. New ones are logged here after each 4H close.")))]);
   const fr = [...P.fills].reverse().map((f) => el("tr", {}, el("td", { class: "l" }, f.time), el("td", { class: "l" }, f.strat),
-    el("td", { class: "l" }, f.side === "buy" ? "買進" : "賣出"), el("td", {}, num(f.price, 1)),
-    el("td", {}, f.btc ? num(f.btc, 5) + " BTC" : f.contracts ? num(f.contracts, 2) + " 張" : "—"),
+    el("td", { class: "l" }, f.side === "buy" ? Z("買進", "Buy") : Z("賣出", "Sell")), el("td", {}, num(f.price, 1)),
+    el("td", {}, f.btc ? num(f.btc, 5) + " BTC" : f.contracts ? num(f.contracts, 2) + Z(" 張", " contracts") : "—"),
     el("td", {}, f.model_px ? num(f.model_px, 1) : "—"), el("td", { class: cls(f.slip == null ? null : -f.slip) }, f.slip == null ? "—" : pct(f.slip, 3))));
-  table("fillTable", [["成交時間", true], ["策略", true], ["方向", true], ["成交價"], ["數量"], ["模型價"], ["滑價"]],
-    fr.length ? fr : [el("tr", {}, el("td", { class: "l", colspan: 7 }, "還沒有成交紀錄。實際下單後按上方「記錄成交」輸入。"))]);
+  table("fillTable", [[Z("成交時間", "Fill time"), true], [Z("策略", "Strategy"), true], [Z("方向", "Side"), true], [Z("成交價", "Fill price")], [Z("數量", "Size")],
+    [Z("模型價", "Model price")], [Z("滑價", "Slippage")]],
+    fr.length ? fr : [el("tr", {}, el("td", { class: "l", colspan: 7 }, Z("還沒有成交紀錄。實際下單後按上方「記錄成交」輸入。", "No fills yet. After placing a real order, use Record fill above.")))]);
 }
 
 // ---------------------------------------------------------------- 提示、KPI、頁首
 function renderPrompts() {
   const box = $("prompts"); box.replaceChildren();
-  const tagText = { action: "要操作", watch: "等待突破", info: "資訊" };
+  const tagText = { action: Z("要操作", "Action"), watch: Z("等待突破", "Watching"), info: Z("資訊", "Info") };
   const order = { action: 0, watch: 1, info: 2 };
   for (const p of [...P.prompts].sort((a, b) => order[a.level] - order[b.level])) {
     const card = el("div", { class: "prompt " + p.level },
       el("div", { class: "head" }, el("span", { class: "key", style: `background:${C.strat[p.strat] || C.ink}` }),
-        el("span", { class: "tag" }, (p.level === "action" ? "⚠ " : "") + tagText[p.level]), p.title),
-      el("div", { class: "text" }, p.text));
+        el("span", { class: "tag" }, (p.level === "action" ? "⚠ " : "") + tagText[p.level]), pTitle(p)),
+      el("div", { class: "text" }, pText(p)));
     const st = P.status[p.strat];
     if (p.level === "watch" && st && st.next) {
       const trig = st.next.trigger, price = P.meta.price, gap = trig / price - 1;
       const above = price > trig;
       const fill = above ? 1 : Math.max(0.02, Math.min(1, 1 - gap / 0.08));          // 距離 8% 以上 = 幾乎空
-      const gapTxt = above ? "盤中已超過" : `還差 ${num(trig - price, 0)} USDT（${(gap * 100).toFixed(2)}%）`;
+      const gapTxt = above ? Z("盤中已超過", "already above intrabar") : Z(`還差 ${num(trig - price, 0)} USDT（${(gap * 100).toFixed(2)}%）`, `${num(trig - price, 0)} USDT to go (${(gap * 100).toFixed(2)}%)`);
       card.append(el("div", { class: "progress" },
         el("div", { class: "bar" }, el("i", { style: `width:${fill * 100}%;background:${C.strat[p.strat]}` })),
-        el("div", { class: "lbl" }, el("span", {}, `現價 ${num(price, 1)}`), el("span", {}, `突破價 ${num(trig, 1)}，${gapTxt}`))));
+        el("div", { class: "lbl" }, el("span", {}, Z(`現價 ${num(price, 1)}`, `Price ${num(price, 1)}`)), el("span", {}, Z(`突破價 ${num(trig, 1)}，${gapTxt}`, `Breakout ${num(trig, 1)}, ${gapTxt}`)))));
       // 規則看的是 4H 收盤價，盤中碰到不算
       card.append(el("div", { class: "hint-line" }, above
-        ? `盤中價格已超過突破價，但要等 ${tstr(st.next.bar_close).slice(5)} 這根 K 線收盤仍高於 ${num(trig, 1)} 才算突破。`
-        : `看的是 ${tstr(st.next.bar_close).slice(5)} 這根 4H K 線的收盤價，盤中碰到不算。`));
+        ? Z(`盤中價格已超過突破價，但要等 ${tstr(st.next.bar_close).slice(5)} 這根 K 線收盤仍高於 ${num(trig, 1)} 才算突破。`,
+            `Price is above the breakout intrabar, but it only counts if the ${tstr(st.next.bar_close).slice(5)} candle closes above ${num(trig, 1)}.`)
+        : Z(`看的是 ${tstr(st.next.bar_close).slice(5)} 這根 4H K 線的收盤價，盤中碰到不算。`,
+            `What counts is the close of the ${tstr(st.next.bar_close).slice(5)} 4H candle; an intrabar touch does not.`)));
     }
     if (p.level === "action") {
       let due = null;
@@ -572,13 +596,13 @@ function renderPrompts() {
       if (due) card.append(el("div", { class: "due", "data-due": String(due) }));
     }
     if (p.level === "action") {
-      const side = p.key && p.key.endsWith("|exit") ? "sell" : p.key && p.key.endsWith("|rebalance") && p.text.includes("賣出") ? "sell" : "buy";
+      const side = p.key && p.key.endsWith("|exit") ? "sell" : p.key && p.key.endsWith("|rebalance") && (p.text.includes("賣出") || (p.en && p.en.text.includes(": sell"))) ? "sell" : "buy";
       if (!(p.key && p.key.endsWith("|stop")))
-        card.append(el("div", { class: "row" }, el("button", { onclick: () => openFill(p.strat, side, p.ref_price, p.qty) }, "已執行，記錄成交")));
+        card.append(el("div", { class: "row" }, el("button", { onclick: () => openFill(p.strat, side, p.ref_price, p.qty) }, Z("已執行，記錄成交", "Done — record the fill"))));
     }
     box.append(card);
   }
-  $("promptSub").textContent = `依 ${tstr(P.meta.last_bar + H4)} 收盤的資料計算`;
+  $("promptSub").textContent = Z(`依 ${tstr(P.meta.last_bar + H4)} 收盤的資料計算`, `Based on data through the ${tstr(P.meta.last_bar + H4)} close`);
 }
 function kpi(label, value, note, color, valueCls) {
   return el("div", { class: "card kpi" }, el("div", { class: "label" }, color ? el("i", { style: `display:inline-block;width:14px;height:3px;border-radius:2px;background:${color}` }) : null, label),
@@ -593,21 +617,23 @@ function renderKpis() {
   const st = P.status, m = P.meta, price = m.price;
   const { eq: eqNow } = accountNow();
   const s1Long = STRATS.filter((s) => st[s].state === "long");
-  const s1Val = s1Long.length ? s1Long.map((s) => `${SHORT[s]} ${num(st[s].btc, 4)} BTC`).join("、") : STRATS.some((s) => st[s].state === "pending") ? "下一根進場" : "空手";
-  const s1Note = s1Long.length ? s1Long.map((s) => `${SHORT[s]} 未實現 ${pct(st[s].unreal)}、停損 ${num(st[s].stop, 0)}`).join("；")
-    : STRATS.map((s) => `${SHORT[s]} 子帳戶 ${num(st[s].equity, 0)}`).join("、");
+  const s1Val = s1Long.length ? s1Long.map((s) => `${SHORT[s]} ${num(st[s].btc, 4)} BTC`).join(Z("、", ", ")) : STRATS.some((s) => st[s].state === "pending") ? Z("下一根進場", "Entering next bar") : Z("空手", "Flat");
+  const s1Note = s1Long.length ? s1Long.map((s) => Z(`${SHORT[s]} 未實現 ${pct(st[s].unreal)}、停損 ${num(st[s].stop, 0)}`, `${SHORT[s]} unrealized ${pct(st[s].unreal)}, stop ${num(st[s].stop, 0)}`)).join(Z("；", "; "))
+    : STRATS.map((s) => Z(`${SHORT[s]} 子帳戶 ${num(st[s].equity, 0)}`, `${SHORT[s]} sub-account ${num(st[s].equity, 0)}`)).join(Z("、", ", "));
   const s1Notional = s1Long.reduce((a, s) => a + st[s].btc * price, 0);
   const dVal = st.D.weight * st.D.equity;
   const watch = STRATS.map((s) => st[s]).filter((x) => x.state === "flat" && x.next.trend_ok && x.next.width_ok);
   const trig = watch.length ? Math.min(...watch.map((x) => x.next.trigger)) : null;
   const etas = STRATS.map((s) => st[s]).filter((x) => x.state === "flat" && x.filter && x.filter.clear && x.next.trend_ok).map((x) => x.filter.clear.at);
-  const blockedNote = etas.length ? `濾網擋住；最快預計 ${tstr(Math.min(...etas)).slice(5)} 收盤後解除` : "濾網未通過，暫不進場";
+  const blockedNote = etas.length ? Z(`濾網擋住；最快預計 ${tstr(Math.min(...etas)).slice(5)} 收盤後解除`, `Filtered out; expected to clear after the ${tstr(Math.min(...etas)).slice(5)} close at the earliest`)
+    : Z("濾網未通過，暫不進場", "Filters not passed; no entry for now");
   $("kpis").replaceChildren(
-    kpi("S1 部位", s1Val, s1Note, C.s1),
-    kpi("D 持有 BTC", pct(st.D.weight, 0, false), `${num(st.D.btc, 4)} BTC · 目標 ${pct(st.D.target, 0, false)} · 子帳戶 ${num(st.D.equity, 0)}`, C.d),
-    kpi("總曝險", pct((s1Notional + dVal) / eqNow, 0, false), `S1 ${num(s1Notional, 0)} ＋ D ${num(dVal, 0)} USDT`, null),
-    kpi("距 S1 突破價", trig ? pct(trig / price - 1, 1) : "—",
-      trig ? `突破價 ${num(trig, 1)}，下一根 4H 收盤高於它就進場` : s1Long.length ? "S1 持倉中" : blockedNote, null),
+    kpi(Z("S1 部位", "S1 position"), s1Val, s1Note, C.s1),
+    kpi(Z("D 持有 BTC", "D's BTC"), pct(st.D.weight, 0, false), Z(`${num(st.D.btc, 4)} BTC · 目標 ${pct(st.D.target, 0, false)} · 子帳戶 ${num(st.D.equity, 0)}`,
+      `${num(st.D.btc, 4)} BTC · target ${pct(st.D.target, 0, false)} · sub-account ${num(st.D.equity, 0)}`), C.d),
+    kpi(Z("總曝險", "Total exposure"), pct((s1Notional + dVal) / eqNow, 0, false), `S1 ${num(s1Notional, 0)} + D ${num(dVal, 0)} USDT`, null),
+    kpi(Z("距 S1 突破價", "Distance to S1 breakout"), trig ? pct(trig / price - 1, 1) : "—",
+      trig ? Z(`突破價 ${num(trig, 1)}，下一根 4H 收盤高於它就進場`, `Breakout ${num(trig, 1)}; a 4H close above it triggers an entry`) : s1Long.length ? Z("S1 持倉中", "S1 in position") : blockedNote, null),
   );
 }
 // ---------------------------------------------------------------- 主視覺
@@ -630,61 +656,69 @@ function renderStatus() {
   const m = P.meta, st = P.status;
   const g = new Date((m.generated_at + TZ) * 1000);
   const day = Math.floor((m.generated_at - m.start) / DAY) + 1;
-  $("statusWhen").textContent = `${g.getUTCMonth() + 1} 月 ${g.getUTCDate()} 日 週${"日一二三四五六"[g.getUTCDay()]} · ${hhmm(m.generated_at)} 更新`
-    + (day >= 1 ? ` · ${m.mode === "live" ? "正式資金" : "紙上交易"}第 ${day} 天` : "");
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  $("statusWhen").textContent = Z(`${g.getUTCMonth() + 1} 月 ${g.getUTCDate()} 日 週${"日一二三四五六"[g.getUTCDay()]} · ${hhmm(m.generated_at)} 更新`
+    + (day >= 1 ? ` · ${m.mode === "live" ? "正式資金" : "紙上交易"}第 ${day} 天` : ""),
+    `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][g.getUTCDay()]}, ${MON[g.getUTCMonth()]} ${g.getUTCDate()} · updated ${hhmm(m.generated_at)} Taiwan time`
+    + (day >= 1 ? ` · ${m.mode === "live" ? "live" : "paper trading"} day ${day}` : ""));
   const acts = P.prompts.filter((p) => p.level === "action");
   $("status").classList.toggle("act", acts.length > 0);
   if (acts.length) {
-    const ttl = (p) => { const x = st[p.strat]; return p.key && p.key.endsWith("|entry") && x && x.provisional ? `${p.strat} 已進場，停損 ${num(x.stop, 1)}` : p.title; };
-    $("statusTitle").textContent = acts.length === 1 ? ttl(acts[0]) : `有 ${acts.length} 件事要處理`;
-    $("statusText").replaceChildren(...acts.map((p) => el("span", {}, acts.length > 1 ? `${ttl(p)}：` : "", p.text)),
-      el("span", {}, el("a", { href: "#actions" }, "查看操作指令")));
+    const ttl = (p) => { const x = st[p.strat]; return p.key && p.key.endsWith("|entry") && x && x.provisional ? Z(`${p.strat} 已進場，停損 ${num(x.stop, 1)}`, `${p.strat} entered, stop ${num(x.stop, 1)}`) : pTitle(p); };
+    $("statusTitle").textContent = acts.length === 1 ? ttl(acts[0]) : Z(`有 ${acts.length} 件事要處理`, `${acts.length} things to do`);
+    $("statusText").replaceChildren(...acts.map((p) => el("span", {}, acts.length > 1 ? `${ttl(p)}${Z("：", ": ")}` : "", pText(p))),
+      el("span", {}, el("a", { href: "#actions" }, Z("查看操作指令", "See the instructions"))));
     return;
   }
-  $("statusTitle").textContent = "一切照常，無需操作";
-  const parts = [`下一個檢查點是 ${tstr(m.next_close).slice(5)} 收盤`];
+  $("statusTitle").textContent = Z("一切照常，無需操作", "All quiet, nothing to do");
+  const parts = [Z(`下一個檢查點是 ${tstr(m.next_close).slice(5)} 收盤`, `Next check: the ${tstr(m.next_close).slice(5)} close`)];
   const w = STRATS.filter(watching), lg = STRATS.filter((s) => st[s].state === "long");
   const trigs = [...new Set(w.map((s) => st[s].next.trigger))];
   for (const t of trigs) {
-    const who = w.filter((s) => st[s].next.trigger === t).map((s) => s).join("、");
-    parts.push([`${who} 要收盤高於 `, el("span", { class: "hl" }, num(t, 1)), " 才會進場"]);
+    const who = w.filter((s) => st[s].next.trigger === t).join(Z("、", " and "));
+    parts.push(Z([`${who} 要收盤高於 `, el("span", { class: "hl" }, num(t, 1)), " 才會進場"], [`${who} enters only on a close above `, el("span", { class: "hl" }, num(t, 1))]));
   }
-  for (const s of lg) parts.push([`${s} 持倉中，停損 `, el("span", { class: "hl" }, num(st[s].stop, 1))]);
+  for (const s of lg) parts.push([Z(`${s} 持倉中，停損 `, `${s} in position, stop `), el("span", { class: "hl" }, num(st[s].stop, 1))]);
   const bl = STRATS.filter((s) => st[s].state === "flat" && !watching(s));
   if (bl.length) {                                                        // 被濾網擋住：說明哪個濾網、預計何時解除
     const trend = bl.some((s) => !st[s].next.trend_ok), width = bl.some((s) => !st[s].next.width_ok);
     const eta = bl.map((s) => {
       const c = st[s].filter && st[s].filter.clear;
-      return c && st[s].next.trend_ok ? [`${SHORT[s]} 預計 `, el("span", { class: "hl" }, tstr(c.at).slice(5)), " 收盤後解除"] : [`${SHORT[s]} 暫不進場`];
+      return c && st[s].next.trend_ok ? Z([`${SHORT[s]} 預計 `, el("span", { class: "hl" }, tstr(c.at).slice(5)), " 收盤後解除"], [`${SHORT[s]} expected to clear after the `, el("span", { class: "hl" }, tstr(c.at).slice(5)), " close"])
+        : [Z(`${SHORT[s]} 暫不進場`, `${SHORT[s]} stays out for now`)];
     });
-    const lead = `S1 ${bl.length === STRATS.length ? "" : bl.map((s) => SHORT[s]).join("、") + " "}被${trend && width ? "趨勢與盤整寬度" : trend ? "日線 200MA" : "盤整寬度"}濾網擋住：`;
-    parts.push([lead, ...eta.flatMap((x, i) => (i ? ["、", ...x] : x))]);
+    const who = bl.length === STRATS.length ? "" : bl.map((s) => SHORT[s]).join(Z("、", " and ")) + " ";
+    const lead = Z(`S1 ${who}被${trend && width ? "趨勢與盤整寬度" : trend ? "日線 200MA" : "盤整寬度"}濾網擋住：`,
+                   `S1 ${who}is held back by the ${trend && width ? "trend and channel-width filters" : trend ? "daily 200-MA filter" : "channel-width filter"}: `);
+    parts.push([lead, ...eta.flatMap((x, i) => (i ? [Z("、", "; "), ...x] : x))]);
   }
-  parts.push(`D 維持 BTC ${pct(st.D.weight, 0, false)}`);
+  parts.push(Z(`D 維持 BTC ${pct(st.D.weight, 0, false)}`, `D stays at ${pct(st.D.weight, 0, false)} BTC`));
   const kids = [];
-  parts.forEach((x, i) => kids.push(...[].concat(x), i < parts.length - 1 ? "；" : "。"));
+  parts.forEach((x, i) => kids.push(...[].concat(x), i < parts.length - 1 ? Z("；", ". ") : Z("。", ".")));
   $("statusText").replaceChildren(el("span", {}, ...kids));
 }
 function renderHero() {
   const m = P.meta, BS = P.stats.backtest, st = P.status;
   const a = accountNow();
-  $("heroLabel").textContent = m.mode === "live" ? "實盤帳戶淨值（模型）· USDT" : "紙上帳戶淨值 · USDT";
+  $("heroLabel").textContent = m.mode === "live" ? Z("實盤帳戶淨值（模型）· USDT", "Live account equity (model) · USDT") : Z("紙上帳戶淨值 · USDT", "Paper account equity · USDT");
   countUp($("heroEq"), a.eq, (v) => num(v, 2));
   const pb = P.equity.paper && P.equity.paper.btc;
   const btcChg = a.started && pb && pb.length ? pb[pb.length - 1][1] / pb[0][1] - 1 : null;
   $("heroDelta").replaceChildren(
     a.started ? el("span", {}, el("b", { class: cls(a.chg) }, `${a.eq - m.capital >= 0 ? "+" : "-"}${num(Math.abs(a.eq - m.capital), 2)} · ${pct(a.chg, 2)}`))
-              : el("span", {}, "起算 ", el("b", {}, tstr(m.start, false))),
-    el("span", {}, `自 ${tstr(m.start, false).slice(5)} 起算 ${num(m.capital, 0)}`),
-    btcChg != null ? el("span", {}, "同期 BTC 持有 ", el("b", {}, pct(btcChg, 2))) : null,
-    el("span", {}, "配置 ", el("b", {}, `S1 ${pct(m.weights.S1, 0, false)} · D ${pct(m.weights.D, 0, false)}`)));
+              : el("span", {}, Z("起算 ", "Starts "), el("b", {}, tstr(m.start, false))),
+    el("span", {}, Z(`自 ${tstr(m.start, false).slice(5)} 起算 ${num(m.capital, 0)}`, `from ${num(m.capital, 0)} on ${tstr(m.start, false).slice(5)}`)),
+    btcChg != null ? el("span", {}, Z("同期 BTC 持有 ", "BTC buy & hold "), el("b", {}, pct(btcChg, 2))) : null,
+    el("span", {}, Z("配置 ", "Split "), el("b", {}, `S1 ${pct(m.weights.S1, 0, false)} · D ${pct(m.weights.D, 0, false)}`)));
   // 走勢：紙上帳戶有兩個點以上就畫紙上，否則畫回測
   const pt = P.equity.paper && P.equity.paper.total;
   const usePaper = pt && pt.length >= 2;
   const src = usePaper ? pt : P.equity.backtest.total;
   $("heroSparkLabel").textContent = usePaper
-    ? `紙上帳戶 ${tstr(src[0][0], false).slice(5)} → ${tstr(src[src.length - 1][0] + H4).slice(5)}，每 4 小時一點`
-    : `回測：同樣配置自 ${tstr(m.backtest_from, false)} 起，${num(src[0][1], 0)} → ${num(src[src.length - 1][1], 0)} USDT`;
+    ? Z(`紙上帳戶 ${tstr(src[0][0], false).slice(5)} → ${tstr(src[src.length - 1][0] + H4).slice(5)}，每 4 小時一點`,
+        `Paper account ${tstr(src[0][0], false).slice(5)} → ${tstr(src[src.length - 1][0] + H4).slice(5)}, one point every 4 hours`)
+    : Z(`回測：同樣配置自 ${tstr(m.backtest_from, false)} 起，${num(src[0][1], 0)} → ${num(src[src.length - 1][1], 0)} USDT`,
+        `Backtest, same split since ${tstr(m.backtest_from, false)}: ${num(src[0][1], 0)} → ${num(src[src.length - 1][1], 0)} USDT`);
   charts.spark.s.setData(src.map(([t, v]) => ({ time: L(t), value: v })));
   charts.spark.chart.timeScale().fitContent();
   // 三個子帳戶：目前狀態一句話＋回測績效
@@ -693,57 +727,66 @@ function renderHero() {
     const x = st[s], isD = s === "D";
     const cap0 = isD ? m.capital * m.weights.D : m.capital * m.weights.S1 / STRATS.length;
     const chg = x.equity / cap0 - 1;
-    let kind = "", pill = "空手", state, gate = null;
+    let kind = "", pill = Z("空手", "Flat"), state, gate = null;
     if (isD) {
-      kind = "d"; pill = `持有 ${pct(x.weight, 0, false)}`;
+      kind = "d"; pill = Z(`持有 ${pct(x.weight, 0, false)}`, `Holding ${pct(x.weight, 0, false)}`);
       const pend = P.d_orders.find((o) => o.pending);
-      state = [el("b", {}, num(x.btc, 5)), ` BTC，最新目標 ${pct(x.target, 0, false)}。`,
-        pend ? `${tstr(pend.exec_t).slice(5)} 調到 ${pctw(pend.weight_to)}。` : "相差未達 20%，不調倉；每天 08:00 判斷。"];
+      state = Z([el("b", {}, num(x.btc, 5)), ` BTC，最新目標 ${pct(x.target, 0, false)}。`,
+        pend ? `${tstr(pend.exec_t).slice(5)} 調到 ${pctw(pend.weight_to)}。` : "相差未達 20%，不調倉；每天 08:00 判斷。"],
+        [el("b", {}, num(x.btc, 5)), ` BTC, latest target ${pct(x.target, 0, false)}. `,
+        pend ? `Moves to ${pctw(pend.weight_to)} at ${tstr(pend.exec_t).slice(5)}.` : "The gap is under 20%, so no rebalance; checked daily at 08:00."]);
     } else if (x.state === "long" && x.provisional) {                         // 這根剛開盤、已用開盤價進場，收盤後才正式記帳
-      kind = "on"; pill = "持倉中";
-      state = [`${tstr(x.entry_t).slice(5)} 開盤以 `, el("b", {}, num(x.entry_px, 1)), " 進場 ", el("b", {}, num(x.btc, 5)),
-        ` BTC，未實現 ${pct(x.unreal, 2)}；停損 `, el("b", {}, num(x.stop, 1)), `（距現價 ${pct(x.stop / price - 1, 1)}）。這根收盤後正式記帳。`];
+      kind = "on"; pill = Z("持倉中", "In position");
+      state = Z([`${tstr(x.entry_t).slice(5)} 開盤以 `, el("b", {}, num(x.entry_px, 1)), " 進場 ", el("b", {}, num(x.btc, 5)),
+        ` BTC，未實現 ${pct(x.unreal, 2)}；停損 `, el("b", {}, num(x.stop, 1)), `（距現價 ${pct(x.stop / price - 1, 1)}）。這根收盤後正式記帳。`],
+        ["Bought ", el("b", {}, num(x.btc, 5)), ` BTC at the ${tstr(x.entry_t).slice(5)} open of `, el("b", {}, num(x.entry_px, 1)),
+        `, unrealized ${pct(x.unreal, 2)}; stop `, el("b", {}, num(x.stop, 1)), ` (${pct(x.stop / price - 1, 1)} from price). Booked once this candle closes.`]);
     } else if (x.state === "long") {
-      kind = "on"; pill = "持倉中";
-      state = [`持有 `, el("b", {}, num(x.btc, 5)), ` BTC，未實現 ${pct(x.unreal, 2)}；停損 `, el("b", {}, num(x.stop, 1)), `（距現價 ${pct(x.stop / price - 1, 1)}）。`];
+      kind = "on"; pill = Z("持倉中", "In position");
+      state = Z([`持有 `, el("b", {}, num(x.btc, 5)), ` BTC，未實現 ${pct(x.unreal, 2)}；停損 `, el("b", {}, num(x.stop, 1)), `（距現價 ${pct(x.stop / price - 1, 1)}）。`],
+        ["Holding ", el("b", {}, num(x.btc, 5)), ` BTC, unrealized ${pct(x.unreal, 2)}; stop `, el("b", {}, num(x.stop, 1)), ` (${pct(x.stop / price - 1, 1)} from price).`]);
     } else if (x.state === "pending") {
-      kind = "on"; pill = "下一根進場";
-      state = [`${tstr(P.meta.next_open).slice(5)} 開盤買進約 `, el("b", {}, num(x.btc, 5)), " BTC，成交後掛止損委託。"];
+      kind = "on"; pill = Z("下一根進場", "Entering next bar");
+      state = Z([`${tstr(P.meta.next_open).slice(5)} 開盤買進約 `, el("b", {}, num(x.btc, 5)), " BTC，成交後掛止損委託。"],
+        ["Buys about ", el("b", {}, num(x.btc, 5)), ` BTC at the ${tstr(P.meta.next_open).slice(5)} open, then places a stop order.`]);
     } else if (watching(s)) {
-      kind = "watch"; pill = "等待突破";
-      state = ["觸發價 ", el("b", {}, num(x.next.trigger, 1)), `，距現價 ${pct(x.next.trigger / price - 1, 2)}。${tstr(x.next.bar_close).slice(5)} 收盤高於它就在下一根進場。`];
+      kind = "watch"; pill = Z("等待突破", "Waiting for breakout");
+      state = Z(["觸發價 ", el("b", {}, num(x.next.trigger, 1)), `，距現價 ${pct(x.next.trigger / price - 1, 2)}。${tstr(x.next.bar_close).slice(5)} 收盤高於它就在下一根進場。`],
+        ["Breakout price ", el("b", {}, num(x.next.trigger, 1)), `, ${pct(x.next.trigger / price - 1, 2)} from price. A ${tstr(x.next.bar_close).slice(5)} close above it triggers an entry at the next open.`]);
     } else if (!x.filter) {                                                  // 舊版 data.js 沒有濾網細節
       const why = [];
-      if (!x.next.trend_ok) why.push("日線在 200 日均線下方");
-      if (!x.next.width_ok) why.push(`盤整寬度 ${x.next.width_rank.toFixed(2)}，需 ≤ 0.5`);
-      state = [`${why.join("、")}，下一根不會進場。`];
+      if (!x.next.trend_ok) why.push(Z("日線在 200 日均線下方", "daily close below the 200-day MA"));
+      if (!x.next.width_ok) why.push(Z(`盤整寬度 ${x.next.width_rank.toFixed(2)}，需 ≤ 0.5`, `channel width percentile ${x.next.width_rank.toFixed(2)}, needs ≤ 0.5`));
+      state = [Z(`${why.join("、")}，下一根不會進場。`, `${why.join("; ")}: no entry next bar.`)];
     } else {
-      kind = "blocked"; pill = "濾網擋住";
+      kind = "blocked"; pill = Z("濾網擋住", "Filtered out");
       const f = x.filter, nx = x.next, kv = (k, v, c) => el("div", { class: "kv " + (c || "") }, el("span", {}, k), el("b", {}, v));
-      state = [nx.width_ok ? "日線還在 200 日均線下方，" : "盤整還不夠窄，", "下一根不會進場。"];
+      state = [nx.width_ok ? Z("日線還在 200 日均線下方，", "The daily close is still below the 200-day MA; ") : Z("盤整還不夠窄，", "The range is not tight enough yet; "), Z("下一根不會進場。", "no entry next bar.")];
       const lines = [];
       if (!nx.width_ok) lines.push(
-        el("div", { class: "gauge", role: "img", "aria-label": `寬度百分位 ${nx.width_rank.toFixed(2)}，放行門檻 0.5` },
+        el("div", { class: "gauge", role: "img", "aria-label": Z(`寬度百分位 ${nx.width_rank.toFixed(2)}，放行門檻 0.5`, `Width percentile ${nx.width_rank.toFixed(2)}, passes at 0.5`) },
           el("i", { style: `width:${Math.min(1, nx.width_rank) * 100}%` }), el("b", { style: "left:50%" })),
-        el("div", { class: "gauge-lbl" }, el("span", {}, "窄"), el("span", {}, "放行 ≤ 0.5"), el("span", {}, "寬")),
-        kv("盤整寬度", `${pct(f.width, 2, false)}（百分位 ${nx.width_rank.toFixed(2)}）`),
-        kv("通道", `${num(f.lo, 0)} – ${num(f.hi, 0)}`),
-        kv("解除條件", `寬度 ≤ ${pct(f.thr, 2, false)}（約 ${num(f.thr_usdt, 0)} USDT）`));
-      if (!nx.trend_ok) lines.push(kv("日線 200MA", `前一日 ${num(f.day_close, 0)}，需站上 ${num(f.ma200, 0)}`));
+        el("div", { class: "gauge-lbl" }, el("span", {}, Z("窄", "Tight")), el("span", {}, Z("放行 ≤ 0.5", "Passes ≤ 0.5")), el("span", {}, Z("寬", "Wide"))),
+        kv(Z("盤整寬度", "Channel width"), Z(`${pct(f.width, 2, false)}（百分位 ${nx.width_rank.toFixed(2)}）`, `${pct(f.width, 2, false)} (percentile ${nx.width_rank.toFixed(2)})`)),
+        kv(Z("通道", "Channel"), `${num(f.lo, 0)} – ${num(f.hi, 0)}`),
+        kv(Z("解除條件", "Clears when"), Z(`寬度 ≤ ${pct(f.thr, 2, false)}（約 ${num(f.thr_usdt, 0)} USDT）`, `width ≤ ${pct(f.thr, 2, false)} (about ${num(f.thr_usdt, 0)} USDT)`)));
+      if (!nx.trend_ok) lines.push(kv(Z("日線 200MA", "Daily 200-MA"), Z(`前一日 ${num(f.day_close, 0)}，需站上 ${num(f.ma200, 0)}`, `previous close ${num(f.day_close, 0)}, needs to be above ${num(f.ma200, 0)}`)));
       if (!nx.width_ok && f.clear) lines.push(
-        kv("預計解除", `${tstr(f.clear.at).slice(5)} 收盤後`, "eta"),
-        el("div", { class: "note" }, `假設之後在現價附近橫盤（每根振幅約 ${num(f.clear.range, 0)}）。屆時突破價約 ${num(f.clear.trigger, 1)}（${pct(f.clear.trigger / price - 1, 1)}），看 ${tstr(f.clear.bar_close).slice(5)} 收盤。`
-          + (nx.trend_ok ? "" : "日線也要站回均線才會進場。")));
+        kv(Z("預計解除", "Expected to clear"), Z(`${tstr(f.clear.at).slice(5)} 收盤後`, `after the ${tstr(f.clear.at).slice(5)} close`), "eta"),
+        el("div", { class: "note" }, Z(`假設之後在現價附近橫盤（每根振幅約 ${num(f.clear.range, 0)}）。屆時突破價約 ${num(f.clear.trigger, 1)}（${pct(f.clear.trigger / price - 1, 1)}），看 ${tstr(f.clear.bar_close).slice(5)} 收盤。`
+          + (nx.trend_ok ? "" : "日線也要站回均線才會進場。"),
+          `Assumes price keeps ranging near here (about ${num(f.clear.range, 0)} per candle). The breakout price would then be about ${num(f.clear.trigger, 1)} (${pct(f.clear.trigger / price - 1, 1)}), checked at the ${tstr(f.clear.bar_close).slice(5)} close.`
+          + (nx.trend_ok ? "" : " The daily close also has to get back above the MA."))));
       gate = el("div", { class: "gate" }, ...lines);
     }
     const b = BS[s] || {};
     return el("div", { class: "card tile " + kind, style: `--c:${C.strat[s]}` },
-      el("div", { class: "name" }, el("i", { class: "dot" }), isD ? "D · 日線趨勢" : `S1 · ${SHORT[s]}`, el("span", { class: "pillstate" }, pill)),
+      el("div", { class: "name" }, el("i", { class: "dot" }), isD ? Z("D · 日線趨勢", "D · Daily trend") : `S1 · ${SHORT[s]}`, el("span", { class: "pillstate" }, pill)),
       el("div", { class: "big" }, num(x.equity, 2), el("small", { class: cls(chg) }, pct(chg, 2))),
       el("div", { class: "state" }, ...state), gate,
-      el("div", { class: "row" }, el("span", {}, "回測年化 ", el("b", {}, pct(b.cagr))),
+      el("div", { class: "row" }, el("span", {}, Z("回測年化 ", "Backtest CAGR "), el("b", {}, pct(b.cagr))),
         el("span", {}, "Sharpe ", el("b", {}, b.sharpe == null ? "—" : b.sharpe.toFixed(2))),
-        el("span", {}, "最大回撤 ", el("b", {}, pct(b.maxdd, 1, false)))));
+        el("span", {}, Z("最大回撤 ", "Max DD "), el("b", {}, pct(b.maxdd, 1, false)))));
   };
   $("heroTiles").replaceChildren(...STRATS.map(tile), tile("D"));
 }
@@ -765,38 +808,41 @@ function renderHeader() {
   $("price").textContent = num(m.price, 1);
   $("lastBar").textContent = `${tstr(m.last_bar).slice(5)}–${hhmm(m.last_bar + H4)}`;
   const badge = $("modeBadge");
-  badge.textContent = m.mode === "live" ? "正式資金" : "紙上交易"; badge.className = "badge" + (m.mode === "live" ? " live" : "");
+  badge.textContent = m.mode === "live" ? Z("正式資金", "Live") : Z("紙上交易", "Paper trading"); badge.className = "badge" + (m.mode === "live" ? " live" : "");
   const ban = $("modeBanner");
   if (m.mode === "live") {
     ban.hidden = false; ban.className = "banner live";
-    ban.textContent = `正式資金模式：提示的買賣數量以起始資金 ${num(m.capital, 0)} USDT（${tstr(m.start, false)} 起）計算。每次在 OKX 下單後，請按「記錄成交」輸入實際成交價，網站會對照模型算滑價。`;
+    ban.textContent = Z(`正式資金模式：提示的買賣數量以起始資金 ${num(m.capital, 0)} USDT（${tstr(m.start, false)} 起）計算。每次在 OKX 下單後，請按「記錄成交」輸入實際成交價，網站會對照模型算滑價。`,
+      `Live mode: order sizes are based on ${num(m.capital, 0)} USDT starting capital (from ${tstr(m.start, false)}). After each OKX order, use Record fill to enter the actual price; the site compares it with the model to measure slippage.`);
   } else ban.hidden = true;
   const age = (Date.now() / 1000 - (m.last_bar + H4)) / 3600;          // 距最後一根 K 線收盤幾小時
   const fresh = $("fresh"); fresh.replaceChildren();
-  if (m.update && m.update.error) fresh.append(el("span", { class: "warn" }, "⚠ 上次抓資料失敗，顯示的是舊資料"));
+  if (m.update && m.update.error) fresh.append(el("span", { class: "warn" }, Z("⚠ 上次抓資料失敗，顯示的是舊資料", "⚠ The last data fetch failed; showing older data")));
   else if (Date.now() / 1000 > m.next_close + (SERVER ? 15 : 90) * 60) fresh.append(el("span", { class: "warn" }, SERVER
-    ? `⚠ 資料已 ${age.toFixed(1)} 小時沒更新，排程可能沒在跑`
-    : `⚠ 公開版資料已落後 ${age.toFixed(1)} 小時（GitHub 排程延遲），最新提示以本機版為準`));
+    ? Z(`⚠ 資料已 ${age.toFixed(1)} 小時沒更新，排程可能沒在跑`, `⚠ No update for ${age.toFixed(1)} hours; the schedule may have stopped`)
+    : Z(`⚠ 公開版資料已落後 ${age.toFixed(1)} 小時（GitHub 排程延遲），最新提示以本機版為準`, `⚠ The public data is ${age.toFixed(1)} hours behind (scheduler delay)`)));
   fresh.hidden = !fresh.childElementCount;                              // 正常時更新時間已寫在頁首大標上方
   $("btnRefresh").disabled = !SERVER; $("btnFill").disabled = !SERVER; $("btnSettings").disabled = false;
-  if (!SERVER) $("btnRefresh").title = "需要用本機伺服器開啟（paper/server.py）";
+  if (!SERVER) $("btnRefresh").title = Z("需要用本機伺服器開啟（paper/server.py）", "Needs the local server (paper/server.py)");
 }
 function tick() {
   for (const d of document.querySelectorAll("[data-due]")) {
     const t = +d.dataset.due, left = t - Date.now() / 1000;
-    d.textContent = left > 0 ? `⏱ 執行時間 ${tstr(t).slice(5)}，還有 ${Math.floor(left / 3600)} 時 ${pad(Math.floor(left % 3600 / 60))} 分` : `⏱ 已到執行時間（${tstr(t).slice(5)}）`;
+    d.textContent = left > 0 ? Z(`⏱ 執行時間 ${tstr(t).slice(5)}，還有 ${Math.floor(left / 3600)} 時 ${pad(Math.floor(left % 3600 / 60))} 分`, `⏱ Due at ${tstr(t).slice(5)}, in ${Math.floor(left / 3600)}h ${pad(Math.floor(left % 3600 / 60))}m`)
+      : Z(`⏱ 已到執行時間（${tstr(t).slice(5)}）`, `⏱ Due now (${tstr(t).slice(5)})`);
     d.classList.toggle("now", left <= 0);
   }
   const m = P.meta, left = m.next_close - Date.now() / 1000;
   $("countdown").textContent = left > 0
-    ? `${tstr(m.next_close).slice(11)}（${Math.floor(left / 3600)} 時 ${pad(Math.floor(left % 3600 / 60))} 分）` : `${tstr(m.next_close).slice(11)}（等待更新）`;
+    ? Z(`${tstr(m.next_close).slice(11)}（${Math.floor(left / 3600)} 時 ${pad(Math.floor(left % 3600 / 60))} 分）`, `${tstr(m.next_close).slice(11)} (in ${Math.floor(left / 3600)}h ${pad(Math.floor(left % 3600 / 60))}m)`)
+    : Z(`${tstr(m.next_close).slice(11)}（等待更新）`, `${tstr(m.next_close).slice(11)} (waiting for update)`);
 }
 
 // ---------------------------------------------------------------- 對話框與 API
 async function api(path, body) {
   const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || !j.ok) throw new Error(j.error || "伺服器錯誤");
+  if (!r.ok || !j.ok) throw new Error(j.error || Z("伺服器錯誤", "Server error"));
   return j;
 }
 function localInput(t) { const d = new Date((t + TZ) * 1000); return d.toISOString().slice(0, 16); }
@@ -819,14 +865,15 @@ function bindDialogs() {
   $("btnSettings").onclick = () => {
     const m = P.meta;
     $("sMode").value = m.mode; $("sCap").value = m.capital; $("sStart").value = tstr(m.start, false);
-    $("sW").value = m.weights.S1; $("sRed").value = m.red_up ? "1" : "0"; $("sErr").textContent = SERVER ? "" : "需要用本機伺服器開啟才能儲存（見 README）。";
+    $("sW").value = m.weights.S1; $("sRed").value = m.red_up ? "1" : "0"; $("sErr").textContent = SERVER ? "" : Z("需要用本機伺服器開啟才能儲存（見 README）。", "Saving needs the local server (see README).");
     $("sSave").disabled = !SERVER; $("dlgSettings").showModal();
   };
   $("sCancel").onclick = () => $("dlgSettings").close();
   $("sSave").onclick = async () => {
     const w = Number($("sW").value);
-    if (!(w >= 0 && w <= 1)) { $("sErr").textContent = "S1 佔比要在 0–1 之間"; return; }
-    if ($("sMode").value === "live" && P.meta.mode !== "live" && !confirm("切換到正式資金模式？之後的提示會以你輸入的資金計算，下單仍需你自己在交易所操作。")) return;
+    if (!(w >= 0 && w <= 1)) { $("sErr").textContent = Z("S1 佔比要在 0–1 之間", "The S1 share must be between 0 and 1"); return; }
+    if ($("sMode").value === "live" && P.meta.mode !== "live" && !confirm(Z("切換到正式資金模式？之後的提示會以你輸入的資金計算，下單仍需你自己在交易所操作。",
+      "Switch to live mode? Instructions will use the capital you entered; you still place every order on the exchange yourself."))) return;
     try {
       await api("/api/config", { mode: $("sMode").value, capital_usdt: Number($("sCap").value), start: $("sStart").value,
                                  weights: { S1: w, D: Math.round((1 - w) * 1e6) / 1e6 }, red_up: $("sRed").value === "1" });
@@ -834,9 +881,9 @@ function bindDialogs() {
     } catch (e) { $("sErr").textContent = e.message; }
   };
   $("btnRefresh").onclick = async () => {
-    const b = $("btnRefresh"); b.disabled = true; b.textContent = "更新中…";
-    try { await api("/api/refresh"); await reloadData(); } catch (e) { alert("更新失敗：" + e.message); }
-    b.textContent = "立即更新"; b.disabled = !SERVER;
+    const b = $("btnRefresh"); b.disabled = true; b.textContent = Z("更新中…", "Updating…");
+    try { await api("/api/refresh"); await reloadData(); } catch (e) { alert(Z("更新失敗：", "Update failed: ") + e.message); }
+    b.textContent = Z("立即更新", "Refresh"); b.disabled = !SERVER;
   };
 }
 function reloadData() {
@@ -861,7 +908,7 @@ function setMax(card) {
   document.body.classList.toggle("has-max", !!card);
   for (const b of document.querySelectorAll("[data-fs]")) {
     const on = b.closest(".card") === card;
-    b.textContent = on ? "✕" : "⛶"; b.title = on ? "離開全螢幕（Esc）" : "全螢幕";
+    b.textContent = on ? "✕" : "⛶"; b.title = on ? Z("離開全螢幕（Esc）", "Exit full screen (Esc)") : Z("全螢幕", "Full screen");
   }
   setTimeout(() => { renderYearly(); renderPnl(); }, 80);           // 自製 SVG 依新尺寸重畫；圖表函式庫會自動調整
 }
@@ -918,6 +965,7 @@ function bindControls() {
   $("ddBtc").onchange = () => updateEq();
   $("tradeTab").onclick = (e) => { const v = e.target.dataset.t; if (!v) return; S.tradeTab = v; segOn("tradeTab", "t", v); renderTrades(); };
   $("fStrat").onchange = renderTrades; $("fPhase").onchange = renderTrades;
+  $("langSeg").onclick = (e) => { const v = e.target.dataset.langSet; if (v) setLang(v); };
   $("btnTheme").onclick = () => {
     const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     const next = cur === "dark" ? "light" : "dark";
@@ -949,10 +997,38 @@ function renderIntro() {
   const m = P.meta, B = P.stats.backtest, st = P.status;
   const s1cap = m.capital * m.weights.S1, dcap = m.capital * m.weights.D;
   const item = (label, v) => el("span", {}, label + " ", el("b", {}, v));
-  const perf = (b) => [item("回測年化", pct(b.cagr)), item("Sharpe", b.sharpe == null ? "—" : b.sharpe.toFixed(2)), item("最大回撤", pct(b.maxdd, 1, false))];
-  const s1Now = STRATS.map((s) => st[s].state === "long" ? `${SHORT[s]} 持倉` : st[s].state === "pending" ? `${SHORT[s]} 待進場` : `${SHORT[s]} 空手`).join("、");
-  $("introS1").replaceChildren(item("配置", `${num(s1cap, 0)} USDT（N20、N30 各 ${num(s1cap / 2, 0)}）`), ...perf(B.S1 || {}), item("目前", s1Now));
-  $("introD").replaceChildren(item("配置", `${num(dcap, 0)} USDT`), ...perf(B.D || {}), item("目前", `持有 BTC ${pct(st.D.weight, 0, false)}`));
+  const perf = (b) => [item(Z("回測年化", "Backtest CAGR"), pct(b.cagr)), item("Sharpe", b.sharpe == null ? "—" : b.sharpe.toFixed(2)), item(Z("最大回撤", "Max drawdown"), pct(b.maxdd, 1, false))];
+  const s1Now = STRATS.map((s) => st[s].state === "long" ? Z(`${SHORT[s]} 持倉`, `${SHORT[s]} in position`) : st[s].state === "pending" ? Z(`${SHORT[s]} 待進場`, `${SHORT[s]} entering`) : Z(`${SHORT[s]} 空手`, `${SHORT[s]} flat`)).join(Z("、", ", "));
+  $("introS1").replaceChildren(item(Z("配置", "Capital"), Z(`${num(s1cap, 0)} USDT（N20、N30 各 ${num(s1cap / 2, 0)}）`, `${num(s1cap, 0)} USDT (${num(s1cap / 2, 0)} each for N20 and N30)`)), ...perf(B.S1 || {}), item(Z("目前", "Now"), s1Now));
+  $("introD").replaceChildren(item(Z("配置", "Capital"), `${num(dcap, 0)} USDT`), ...perf(B.D || {}), item(Z("目前", "Now"), Z(`持有 BTC ${pct(st.D.weight, 0, false)}`, `holding ${pct(st.D.weight, 0, false)} BTC`)));
+}
+// ---------------------------------------------------------------- 語言
+// 固定文字：第一次切換時把原本的中文記在 data-zh*，之後兩邊互換
+function applyStatic() {
+  const en = EN();
+  for (const [attr, key, zkey] of [["data-en", "en", "zh"], ["data-en-title", "enTitle", "zhTitle"], ["data-en-aria", "enAria", "zhAria"]]) {
+    for (const n of document.querySelectorAll(`[${attr}]`)) {
+      const prop = key === "en" ? null : key === "enTitle" ? "title" : "aria-label";
+      if (n.dataset[zkey] == null) n.dataset[zkey] = prop ? n.getAttribute(prop) || "" : n.textContent;
+      const v = en ? n.dataset[key] : n.dataset[zkey];
+      if (prop) n.setAttribute(prop, v); else n.textContent = v;
+    }
+  }
+  document.title = en ? "Signal Tower · BTC strategy account" : "Signal Tower · BTC 策略帳戶";
+  segOn("langSeg", "langSet", en ? "en" : "zh");
+}
+function setLang(l) {
+  const h = document.documentElement;
+  if (h.dataset.lang === l) return;
+  h.dataset.lang = l; h.lang = l === "en" ? "en" : "zh-Hant";
+  try { localStorage.setItem("signals.lang", l); } catch (e) { /* 無痕模式 */ }
+  const u = new URL(location.href);                                       // 網址帶 ?lang= 時跟著改，重新整理才不會跳回去
+  if (u.searchParams.has("lang")) { u.searchParams.set("lang", l); history.replaceState(null, "", u); }
+  applyStatic();
+  const locale = l === "en" ? "en-US" : "zh-TW";
+  for (const c of [charts.k.chart, charts.eq.chart, charts.dd.chart, charts.exp.chart, charts.spark.chart]) c.applyOptions({ localization: { locale } });
+  setMax(document.querySelector(".card.max"));                            // 全螢幕按鈕的提示文字
+  renderAll(true);
 }
 function renderAll(keep) {
   renderHeader(); renderStatus(); renderIntro(); renderHero(); renderPrompts(); renderKpis();
@@ -961,10 +1037,11 @@ function renderAll(keep) {
 
 // ---------------------------------------------------------------- 啟動
 (function boot() {
-  if (!P) { document.body.prepend(el("div", { class: "banner" }, "找不到 data.js：請先執行 paper/engine.py。")); return; }
+  if (!P) { document.body.prepend(el("div", { class: "banner" }, Z("找不到 data.js：請先執行 paper/engine.py。", "data.js not found: run paper/engine.py first."))); return; }
   const intro = $("intro");                                               // 記住策略說明是否收合
   try { if (localStorage.getItem("introClosed") === "1") intro.open = false; } catch (e) { /* 忽略 */ }
   intro.addEventListener("toggle", () => { try { localStorage.setItem("introClosed", intro.open ? "0" : "1"); } catch (e) { /* 忽略 */ } });
+  applyStatic();
   readColors(); initSpark(); initK(); initEq(); bindControls(); bindDialogs(); bindFullscreen(); bindNav(); renderAll(false);
   requestAnimationFrame(() => setTimeout(() => {                          // 等圖表排版完成再設定範圍
     setRange(S.range);

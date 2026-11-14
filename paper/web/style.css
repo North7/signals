@@ -108,6 +108,10 @@ header.top {
 .chip[hidden] { display: none; }
 .chip .warn, .warn { color: var(--critical); font-weight: 600; }
 .top .actions { display: flex; align-items: center; gap: 8px; }
+.top .actions button { white-space: nowrap; }
+/* 中／EN：整段不同的內容各寫一份，只顯示目前語言那份 */
+:root[data-lang="en"] [data-l="zh"], :root:not([data-lang="en"]) [data-l="en"] { display: none !important; }
+.top .actions .seg.lang button { padding: 5px 11px; min-width: 36px; font-size: 12.5px; letter-spacing: .04em; }
 #btnTheme .i-sun { display: none; }
 :root[data-theme="dark"] #btnTheme .i-sun { display: block; }
 :root[data-theme="dark"] #btnTheme .i-moon { display: none; }
@@ -242,7 +246,14 @@ input[type="checkbox"] { accent-color: var(--s1); width: 15px; height: 15px; }
 .tip .r i { width: 12px; height: 2px; display: inline-block; }
 
 /* 熱力圖 */
-.heat { display: grid; grid-template-columns: 46px repeat(12, 1fr) 60px; gap: 4px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.heat { display: grid; grid-template-columns: 46px repeat(12, minmax(0, 1fr)) 60px; gap: 4px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.heat .sm { display: none; }
+@media (max-width: 560px) {                       /* 手機：月份用短標，格子縮小，不要撐出橫向捲動 */
+  .heat { grid-template-columns: 30px repeat(12, minmax(0, 1fr)) 38px; gap: 2px; font-size: 10px; }
+  .heat div { padding: 6px 0; border-radius: 5px; }
+  .heat .lg { display: none; }
+  .heat .sm { display: inline; }
+}
 .heat div { padding: 7px 2px; text-align: center; border-radius: 8px; }
 .heat .h { color: var(--muted); }
 .heat .c { color: var(--ink); font-weight: 500; }
@@ -329,9 +340,10 @@ body.has-max { overflow: hidden; }
   .meta { margin-left: 0; width: 100%; gap: 2px 14px; order: 3; }
   .chip { font-size: 12px; }
   .chip b { font-size: 12.5px; }
-  .top .actions { margin-left: auto; gap: 6px; }
+  .top .actions { margin-left: auto; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .top .actions button { padding: 7px 13px; font-size: 13px; }
   .top .actions button.icon { width: 36px; height: 36px; padding: 0; }
+  .top .actions .seg.lang button { padding: 5px 9px; min-width: 32px; }
   .secnav { top: 0; padding: 6px 12px 8px; justify-content: flex-start; }
   main { padding: 0 12px 40px; gap: 16px; }
   main [id], main details[id] { scroll-margin-top: 64px; }

@@ -28,6 +28,7 @@ K 線上的回測與紙上交易進出場、停損線、D 的調倉、資金曲�
 注意：
 - 公開網站是唯讀展示版：沒有立即更新、記錄成交、設定與提示紀錄；在 GitHub Actions 產生的 `data.js` 也不帶操作紀錄與成交（只存在私人 repo）
 - 兩根 K 線之間不會重新發布，網頁上的「現價」最多落後 4 小時
+- 中英雙語：右上「中／EN」切換並記住（localStorage `signals.lang`）。預設語言和 Aron Lab 同一套：網址 `?lang=en|zh` → 自己選過的 → IP 地區（`functions/index.js` 是 Cloudflare Pages Function，把 `request.cf.country` 寫進 `<html data-geo>`；TW/HK/MO/CN 用中文）→ 瀏覽器語言。固定文字的英文寫在 `index.html` 的 `data-en`，畫面上算出來的字在 `app.js` 用 `Z(中文, English)`，操作指令的英文由 `engine.py` 產生（每則提示的 `en`）
 - 公開 repo 若 60 天沒有任何提交，GitHub 會停用內建排程（cron-job.org 觸發不受影響）
 
 ## 本機版（選用）
