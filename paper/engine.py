@@ -460,6 +460,11 @@ def main(offline=False, notify=True):
                                     f"成交後立刻掛止損委託：觸發價 = 成交價 − {stop_dist:,.0f}（3×ATR），觸發後市價賣出全部。"
                                     + (f"模型以 {tw(next_open)} 開盤價 {px0:,.1f} 成交，停損 {stop0:,.1f}；"
                                        f"你的實際成交價不同時，以「成交價 − {stop_dist:,.0f}」為準。" if filled else ""),
+                            "en": {"title": f"{name} entry: buy {st['btc']:.5f} BTC at market at the {tw(next_open)} open",
+                                   "text": f"Buy about {st['btc']:.5f} BTC spot at market (about {notional:,.0f} USDT, {size_est:.0%} of the sub-account). "
+                                           f"Right after the fill, place a stop order: trigger = fill price − {stop_dist:,.0f} (3×ATR), then sell everything at market."
+                                           + (f" The model filled at the {tw(next_open)} open of {px0:,.1f}, stop {stop0:,.1f}; "
+                                              f"if your actual fill differs, use fill − {stop_dist:,.0f}." if filled else "")},
                             "ref_price": px0 if filled else price, "stop": stop0 if filled else None, "qty": st["btc"]})
         elif s["open"]:
             tr = s["open"]; cur_stop = tr["stops"][-1][1]
@@ -473,10 +478,14 @@ def main(offline=False, notify=True):
                 prompts.append({"level": "action", "strat": name, "key": f"{int(T.timestamp())}|{name}|stop",
                                 "title": f"{name} 上調停損至 {cur_stop:,.1f}",
                                 "text": f"把止損委託的觸發價從 {prev_stop:,.1f} 改到 {cur_stop:,.1f}（{tw(next_open)} 起生效），數量 {st['btc']:.5f} BTC 不變。",
+                                "en": {"title": f"{name}: raise stop to {cur_stop:,.1f}",
+                                       "text": f"Move the stop order's trigger from {prev_stop:,.1f} to {cur_stop:,.1f} (effective {tw(next_open)}); size stays {st['btc']:.5f} BTC."},
                                 "ref_price": price, "stop": cur_stop, "qty": st["btc"]})
             else:
                 prompts.append({"level": "info", "strat": name, "key": None, "title": f"{name} 持倉中",
-                                "text": f"停損維持 {cur_stop:,.1f}（距現價 {cur_stop / price - 1:+.1%}），不需動作。"})
+                                "text": f"停損維持 {cur_stop:,.1f}（距現價 {cur_stop / price - 1:+.1%}），不需動作。",
+                                "en": {"title": f"{name} in position",
+                                       "text": f"Stop stays at {cur_stop:,.1f} ({cur_stop / price - 1:+.1%} from price). No action needed."}})
         else:
             last_exit = s["trades"][-1] if s["trades"] else None
             just_exit = last_exit is not None and last_exit["exit_i"] == len(k) - 1
@@ -485,28 +494,41 @@ def main(offline=False, notify=True):
                 prompts.append({"level": "action", "strat": name, "key": f"{int(T.timestamp())}|{name}|exit",
                                 "title": f"{name} 已停損出場 @ {last_exit['exit_px']:,.1f}",
                                 "text": "交易所的止損委託應已觸發賣出；確認這個子帳戶的 BTC 已賣完，並撤掉殘留委託。",
+                                "en": {"title": f"{name} stopped out @ {last_exit['exit_px']:,.1f}",
+                                       "text": "The exchange stop order should have sold the position. Check that this sub-account holds no BTC and cancel any leftover orders."},
                                 "ref_price": last_exit["exit_px"], "stop": None, "qty": None})
             if not (nb["trend_ok"] and nb["width_ok"]):
                 fd = s1_filter_detail(k, n)
                 st["filter"] = fd
-                why, cond = [], []
+                why, cond, why_en, cond_en = [], [], [], []
                 if not nb["trend_ok"]:
                     why.append(f"前一日日線收盤 {fd['day_close']:,.0f} 在 200 日均線 {fd['ma200']:,.0f} 下方")
                     cond.append(f"日線收盤站回 200 日均線 {fd['ma200']:,.0f} 之上")
+                    why_en.append(f"the previous daily close {fd['day_close']:,.0f} is below the 200-day MA {fd['ma200']:,.0f}")
+                    cond_en.append(f"a daily close back above the 200-day MA {fd['ma200']:,.0f}")
                 if not nb["width_ok"]:
                     why.append(f"盤整寬度 {fd['width']:.2%}（{fd['lo']:,.0f}–{fd['hi']:,.0f}），百分位 {nb['width_rank']:.2f}，需 ≤ 0.5")
                     cond.append(f"寬度降到 {fd['thr']:.2%}（以現價約 {fd['thr_usdt']:,.0f} USDT）以下")
+                    why_en.append(f"channel width {fd['width']:.2%} ({fd['lo']:,.0f}–{fd['hi']:,.0f}), percentile {nb['width_rank']:.2f}, needs ≤ 0.5")
+                    cond_en.append(f"width below {fd['thr']:.2%} (about {fd['thr_usdt']:,.0f} USDT at the current price)")
                 text = "原因：" + "；".join(why) + "。解除條件：" + "，且".join(cond) + "。"
+                text_en = "Why: " + "; ".join(why_en) + ". Clears when: " + ", and ".join(cond_en) + "."
                 c = fd["clear"]
                 if not nb["width_ok"] and c:
-                    text += (f"預計解除：若之後在現價附近橫盤，寬度在 {tw(pd.Timestamp(c['at'], unit='s', tz='UTC'))} 收盤後放行，"
-                             f"接著看 {tw(pd.Timestamp(c['bar_close'], unit='s', tz='UTC'))} 收盤是否高於約 {c['trigger']:,.1f}。")
-                prompts.append({"level": "info", "strat": name, "key": None, "title": f"{name} 空手，下一根不會進場", "text": text})
+                    at, bc = tw(pd.Timestamp(c['at'], unit='s', tz='UTC')), tw(pd.Timestamp(c['bar_close'], unit='s', tz='UTC'))
+                    text += f"預計解除：若之後在現價附近橫盤，寬度在 {at} 收盤後放行，接著看 {bc} 收盤是否高於約 {c['trigger']:,.1f}。"
+                    text_en += (f" Expected to clear: if price keeps ranging near here, the width filter passes after the {at} close; "
+                                f"then watch whether the {bc} close is above about {c['trigger']:,.1f}.")
+                prompts.append({"level": "info", "strat": name, "key": None, "title": f"{name} 空手，下一根不會進場", "text": text,
+                                "en": {"title": f"{name} flat — no entry next bar", "text": text_en}})
             else:
                 prompts.append({"level": "watch", "strat": name, "key": None,
                                 "title": f"{name} 空手，等待突破 {nb['trigger']:,.1f}",
                                 "text": f"若 {tw(nb['bar_close'])} 收盤 > {nb['trigger']:,.1f}（距現價 {nb['trigger'] / price - 1:+.2%}），"
-                                        f"下一根開盤買進約 {st['btc_est']:.5f} BTC（約 {st['notional_est']:,.0f} USDT）。"})
+                                        f"下一根開盤買進約 {st['btc_est']:.5f} BTC（約 {st['notional_est']:,.0f} USDT）。",
+                                "en": {"title": f"{name} flat — waiting for a breakout above {nb['trigger']:,.1f}",
+                                       "text": f"If the {tw(nb['bar_close'])} close is above {nb['trigger']:,.1f} ({nb['trigger'] / price - 1:+.2%} from price), "
+                                               f"buy about {st['btc_est']:.5f} BTC (about {st['notional_est']:,.0f} USDT) at the next open."}})
         status[name] = st
 
     # D
@@ -524,10 +546,14 @@ def main(offline=False, notify=True):
         prompts.append({"level": "action", "strat": "D", "key": f"{int(o['signal_day'].timestamp())}|D|rebalance",
                         "title": f"D 調倉：{tw(o['exec_t'])} 把 BTC 比例調到 {o['weight_to']:.0%}",
                         "text": f"目前約 {w_now:.0%} → {o['weight_to']:.0%}：{'買進' if btc > 0 else '賣出'} {abs(btc):.4f} BTC（約 {abs(btc) * price:,.0f} USDT，現貨）。",
+                        "en": {"title": f"D rebalance: set BTC to {o['weight_to']:.0%} at {tw(o['exec_t'])}",
+                               "text": f"About {w_now:.0%} → {o['weight_to']:.0%}: {'buy' if btc > 0 else 'sell'} {abs(btc):.4f} BTC (about {abs(btc) * price:,.0f} USDT, spot)."},
                         "ref_price": price, "stop": None, "qty": abs(btc)})
     else:
         prompts.append({"level": "info", "strat": "D", "key": None, "title": f"D 持有 BTC {w_now:.0%}",
-                        "text": f"最新目標 {tg:.0%}，指令 {D['signal']:.0%}，相差未達 20%，不調倉。下次判斷：台灣時間明早 08:00。"})
+                        "text": f"最新目標 {tg:.0%}，指令 {D['signal']:.0%}，相差未達 20%，不調倉。下次判斷：台灣時間明早 08:00。",
+                        "en": {"title": f"D holds {w_now:.0%} BTC",
+                               "text": f"Latest target {tg:.0%}, current order {D['signal']:.0%}; the gap is under 20%, so no rebalance. Next check: 08:00 Taiwan time tomorrow."}})
 
     # ---- 紀錄新的操作提示、通知
     log = pd.read_csv(LOG_PATH) if LOG_PATH.exists() else pd.DataFrame(columns=["logged_at", "key", "strat", "title", "text", "ref_price", "stop", "qty_btc", "mode"])

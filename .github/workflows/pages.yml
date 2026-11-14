@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["paper/**", "backtest.py", ".github/workflows/pages.yml"]
+    paths: ["paper/**", "functions/**", "backtest.py", ".github/workflows/pages.yml"]
 
 permissions:
   contents: read
