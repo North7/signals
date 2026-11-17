@@ -5,6 +5,7 @@
    S1：4H 通道突破只做多，N20 與 N30 兩個子帳戶各半；寬度百分位 ≤0.5、日線 200MA、3×ATR 移動停損、
        波動目標 40%（上限 1 倍，不加槓桿），現貨，扣 0.12%/邊（手續費 0.10%＋滑價 0.02%），無資金費
    D ：日線趨勢＋動能＋波動目標（strategy_summary.md），現貨帳本式、20% 調倉門檻、次日開盤成交、0.15%/邊
+   V ：估值觀察組（strategy_v.py）：賣壓累積＋相對未實現獲利，日線，D+1 04:00 UTC 開盤成交；獨立的紙上帳戶，不算進組合
 3. 產生逐筆交易、目前部位、下一步操作提示（可以直接照著在 OKX 下單）、資金與績效
 4. 新的操作提示寫入 state/signals_log.csv，並發 macOS 通知；結果寫到 web/data.js 給網頁讀
 用法：python paper/engine.py [--offline] [--no-notify]
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parent
 PROJ = ROOT.parent
 sys.path.insert(0, str(PROJ))
 import backtest as BT  # noqa: E402
+import strategy_v as V  # noqa: E402
 from backtest import atr, daily_filter, donchian, BARS_PER_YEAR  # noqa: E402
 
 DATA, STATE, WEB = ROOT / "data", ROOT / "state", ROOT / "web"
@@ -346,6 +348,116 @@ def trigger_publish(repo):
     except Exception as e:
         return f"觸發公開網站更新失敗：{e}"
 
+def v_section(R, info, k, T, next_open, price, mkt, v_start, v_cap):
+    """V 的網頁資料與操作提示。指令在決定的那次執行（成交那根還沒開盤或剛開盤）與之後一天內都會顯示，紀錄與推播只有第一次"""
+    st0 = R["status"]
+    val = R["value"]
+    paper = val[val.index >= v_start] if T >= v_start else None
+    eq = float(v_cap * paper.iloc[-1] / paper.iloc[0]) if paper is not None and len(paper) else v_cap
+    opn, pend = R["open"], R["pending"]
+    bar = mkt.get("bar") or {}
+    day = lambda d: pd.Timestamp(d).strftime("%m/%d")
+    st = {"name": "V", "equity": eq, "capital": v_cap, "start": int(v_start.timestamp()),
+          "day": int(pd.Timestamp(st0["day"], tz="UTC").timestamp()), "close_day": int(pd.Timestamp(st0["close_day"], tz="UTC").timestamp()),
+          "sx": st0["sx"], "mom": st0["mom"], "rup": st0["rup"], "sx_now": st0["sx_now"], "mom_now": st0["mom_now"],
+          "cb": st0["cb"], "cs": st0["cs"], "buy_ok": st0["buy_ok"], "sell_ok": st0["sell_ok"],
+          "rules": {"sx_buy": V.SX_BUY, "rup_th": V.RUP_TH, "sx_sell": V.SX_SELL, "mom_sell": V.MOM_SELL, "confirm": V.CONFIRM},
+          "data": {"source": info["source"], "error": info["error"], "drift": info["drift"],
+                   "rup_day": int(pd.Timestamp(info["rup_date"], tz="UTC").timestamp()), "close_day": int(pd.Timestamp(info["close_date"], tz="UTC").timestamp())}}
+    btc_now = eq / price
+    note = note_en = ""
+    if info["error"]:
+        note, note_en = f"（Bitview 抓取失敗，RUP 用快取到 {day(info['rup_date'])}）", f" (Bitview fetch failed; RUP from cache through {day(info['rup_date'])})"
+    elif info["rup_date"] < info["close_date"]:
+        note, note_en = (f"（{day(info['close_date'])} 的 RUP 還沒出來，台灣 08:17 後才有）",
+                         f" ({day(info['close_date'])} RUP not out yet; usually after 08:17 Taiwan time)")
+    prompts = []
+    last_ev = R["events"][-1] if R["events"] else None
+    recent = last_ev is not None and next_open - pd.Timedelta(hours=24) <= last_ev[0]
+    if pend:                                                           # 已決定，成交那根（下一根）還沒收盤
+        side, ft = pend["side"], pend["fill_t"]
+        filled = bar.get("t") == int(ft.timestamp())
+        px = bar["open"] if filled else price
+        if side == "buy":
+            btc = eq / px
+            st.update(state="long" if filled else "pending", provisional=filled, entry_t=int(ft.timestamp()), entry_px=px if filled else None,
+                      btc=btc, unreal=float(price / px - 1) if filled else None)
+            title = f"V 進場（觀察組）：{tw(ft)} 開盤市價買進 {btc:.5f} BTC"
+            text = (f"估值條件已連續 {V.CONFIRM} 天成立（{day(pend['signal_day'])}：賣壓累積 {st0['sx']:.0f}、RUP {st0['rup']:.1f}%）。"
+                    f"現貨市價買進約 {btc:.5f} BTC（約 {eq:,.0f} USDT，V 帳戶全部資金）。沒有停損，之後等賣出條件。"
+                    + (f"模型以 {tw(ft)} 開盤價 {px:,.1f} 成交。" if filled else ""))
+            en = {"title": f"V entry (observation): buy {btc:.5f} BTC at market at the {tw(ft)} open",
+                  "text": f"The valuation conditions held {V.CONFIRM} days in a row ({day(pend['signal_day'])}: selling pressure {st0['sx']:.0f}, RUP {st0['rup']:.1f}%). "
+                          f"Buy about {btc:.5f} BTC spot at market (about {eq:,.0f} USDT, all of the V account). No stop; hold until the sell condition."
+                          + (f" The model filled at the {tw(ft)} open of {px:,.1f}." if filled else "")}
+        else:
+            btc = eq / price
+            st.update(state="flat" if filled else "pending_exit", provisional=filled, exit_t=int(ft.timestamp()), btc=btc,
+                      entry_t=int(opn["entry_t"].timestamp()), entry_px=opn["entry_px"], unreal=float(price / opn["entry_px"] - 1))
+            title = f"V 賣出（觀察組）：{tw(ft)} 開盤市價賣出全部 {btc:.5f} BTC"
+            text = (f"賣出條件已連續 {V.CONFIRM} 天成立（{day(pend['signal_day'])}：賣壓累積 {st0['sx']:.0f}、動能品質 {st0['mom']:.2f}）。"
+                    f"現貨市價賣出 V 帳戶的全部 BTC。" + (f"模型以 {tw(ft)} 開盤價 {px:,.1f} 成交。" if filled else ""))
+            en = {"title": f"V exit (observation): sell all {btc:.5f} BTC at market at the {tw(ft)} open",
+                  "text": f"The sell condition held {V.CONFIRM} days in a row ({day(pend['signal_day'])}: selling pressure {st0['sx']:.0f}, momentum quality {st0['mom']:.2f}). "
+                          f"Sell all BTC in the V account at market." + (f" The model filled at the {tw(ft)} open of {px:,.1f}." if filled else "")}
+        prompts.append({"level": "action", "strat": "V", "key": f"{pend['signal_day']:%Y-%m-%d}|V|{'entry' if side == 'buy' else 'exit'}",
+                        "title": title, "text": text, "en": en, "ref_price": px, "stop": None, "qty": btc})
+    elif recent:                                                       # 已成交（一天內）：提醒還沒照做的人補做
+        ft, side, px, sday = last_ev
+        if side == "buy":
+            btc = eq / px
+            title, text = f"V 已進場（觀察組）@ {px:,.1f}", f"模型以 {tw(ft)} 開盤價 {px:,.1f} 買進約 {btc:.5f} BTC（V 帳戶全部資金）。還沒照做的話，現在用市價補做；沒有停損。"
+            en = {"title": f"V entered (observation) @ {px:,.1f}", "text": f"The model bought about {btc:.5f} BTC at the {tw(ft)} open of {px:,.1f} (all of the V account). If you have not yet, buy at market now; there is no stop."}
+        else:
+            btc = eq / px if px else 0.0
+            title, text = f"V 已賣出（觀察組）@ {px:,.1f}", f"模型以 {tw(ft)} 開盤價 {px:,.1f} 賣出全部 BTC。還沒照做的話，現在用市價補做。"
+            en = {"title": f"V exited (observation) @ {px:,.1f}", "text": f"The model sold all BTC at the {tw(ft)} open of {px:,.1f}. If you have not yet, sell at market now."}
+        prompts.append({"level": "action", "strat": "V", "key": f"{sday:%Y-%m-%d}|V|{'entry' if side == 'buy' else 'exit'}",
+                        "title": title, "text": text, "en": en, "ref_price": px, "stop": None, "qty": btc})
+    if "state" not in st:
+        if opn:
+            st.update(state="long", entry_t=int(opn["entry_t"].timestamp()), entry_px=opn["entry_px"], btc=eq / price,
+                      unreal=float(price / opn["entry_px"] - 1), held_days=float((T + pd.Timedelta(hours=4) - opn["entry_t"]).total_seconds() / 86400))
+        else:
+            st.update(state="flat", btc=0.0)
+    if not prompts:
+        if st["state"] == "long":
+            prompts.append({"level": "info", "strat": "V", "key": None, "title": "V 持有中（估值觀察組）",
+                            "text": f"{day(opn['entry_t'])} 以 {opn['entry_px']:,.1f} 進場，未實現 {st['unreal']:+.1%}，沒有停損。"
+                                    f"賣出條件：賣壓累積回到 0 且動能品質 > {V.MOM_SELL}，連續 {V.CONFIRM} 天；"
+                                    f"目前賣壓 {st0['sx']:.0f}、動能品質 {st0['mom']:.2f}（{day(st0['day'])}）。" + note,
+                            "en": {"title": "V in position (valuation, observation)",
+                                   "text": f"Entered {day(opn['entry_t'])} at {opn['entry_px']:,.1f}, unrealized {st['unreal']:+.1%}, no stop. "
+                                           f"Sells when selling pressure is back to 0 and momentum quality > {V.MOM_SELL}, {V.CONFIRM} days in a row; "
+                                           f"now pressure {st0['sx']:.0f}, momentum quality {st0['mom']:.2f} ({day(st0['day'])})." + note_en}})
+        else:
+            prompts.append({"level": "info", "strat": "V", "key": None, "title": "V 空手，等估值條件（觀察組）",
+                            "text": f"買進條件：賣壓累積 ≥ {V.SX_BUY:g} 且 RUP ≤ {V.RUP_TH}%，連續 {V.CONFIRM} 天；"
+                                    f"目前賣壓 {st0['sx']:.0f}、RUP {st0['rup']:.1f}%（{day(st0['day'])}）。" + note,
+                            "en": {"title": "V flat — waiting for the valuation conditions (observation)",
+                                   "text": f"Buys when selling pressure ≥ {V.SX_BUY:g} and RUP ≤ {V.RUP_TH}%, {V.CONFIRM} days in a row; "
+                                           f"now pressure {st0['sx']:.0f}, RUP {st0['rup']:.1f}% ({day(st0['day'])})." + note_en}})
+    # 交易與績效
+    trades = []
+    for t in R["trades"] + ([R["open"]] if R["open"] else []):
+        trades.append({"strat": "V", "phase": "paper" if t["entry_t"] >= v_start else "backtest", "open": t["exit_t"] is None,
+                       "entry_t": int(t["entry_t"].timestamp()), "entry_px": round(t["entry_px"], 1),
+                       "exit_t": None if t["exit_t"] is None else int(t["exit_t"].timestamp()), "exit_px": round(t["exit_px"], 1),
+                       "ret": t["ret"], "dip": t["dip"], "days": round(t["days"], 1),
+                       "signal_in": int(pd.Timestamp(t["signal_in"], tz="UTC").timestamp()),
+                       "signal_out": None if t["signal_out"] is None else int(pd.Timestamp(t["signal_out"], tz="UTC").timestamp())})
+    ser = lambda x, step: [[int(t.timestamp()), round(float(v), 2)] for t, v in x.resample(step).last().dropna().items()]
+    bt_val = v_cap * val / val.iloc[0]
+    out = {"status": st, "trades": trades,
+           "stats": {"backtest": perf(bt_val), "paper": perf(v_cap * paper / paper.iloc[0]) if paper is not None and len(paper) > 1 else None,
+                     "btc": perf(k.close[k.index >= val.index[0]])},
+           "equity": {"backtest": ser(bt_val, "1D"), "paper": ser(v_cap * paper / paper.iloc[0], "4h") if paper is not None and len(paper) else None},
+           "backtest_from": int(val.index[0].timestamp()),
+           "series": [[int(pd.Timestamp(d, tz="UTC").timestamp()), round(float(r.close), 1), None if not np.isfinite(r.sx) else round(float(r.sx), 1),
+                       None if not np.isfinite(r.mom) else round(float(r.mom), 3), None if not np.isfinite(r.rup) else round(float(r.rup), 2)]
+                      for d, r in R["series"].iloc[-730:].iterrows()]}
+    return out, prompts
+
 def main(offline=False, notify=True):
     cfg = json.loads((ROOT / "config.json").read_text())
     STATE.mkdir(exist_ok=True); WEB.mkdir(exist_ok=True)
@@ -555,6 +667,21 @@ def main(offline=False, notify=True):
                         "en": {"title": f"D holds {w_now:.0%} BTC",
                                "text": f"Latest target {tg:.0%}, current order {D['signal']:.0%}; the gap is under 20%, so no rebalance. Next check: 08:00 Taiwan time tomorrow."}})
 
+    # ---- V：估值觀察組（獨立的紙上帳戶，失敗不影響 S1、D）
+    vcfg = cfg.get("v") or {}
+    v_start = pd.Timestamp(vcfg.get("start", "2026-11-17"), tz="UTC"); v_cap = float(vcfg.get("capital_usdt", 10000))
+    v_out, v_err = None, None
+    try:
+        vdf, vinfo = V.load_series(k, offline, http_json)
+        VR = V.v_run(vdf, k)
+        V.self_check(VR)
+        v_out, vp = v_section(VR, vinfo, k, T, next_open, price, mkt, v_start, v_cap)
+        prompts.extend(vp)
+        status["V"] = v_out["status"]
+    except Exception as e:
+        v_err = f"{type(e).__name__}: {e}"[:300]
+        print(f"  V 計算失敗：{v_err}")
+
     # ---- 紀錄新的操作提示、通知
     log = pd.read_csv(LOG_PATH) if LOG_PATH.exists() else pd.DataFrame(columns=["logged_at", "key", "strat", "title", "text", "ref_price", "stop", "qty_btc", "mode"])
     new_rows = []
@@ -575,7 +702,8 @@ def main(offline=False, notify=True):
     # 手機推播：只在這次抓到新 K 線時送（雲端執行不保留提示紀錄，用這個條件避免同一根 K 線重複推播）
     topic = __import__("os").environ.get("NTFY_TOPIC")
     if topic and upd["candles"] > 0:
-        actions = phone_rows([p for p in prompts if p["level"] == "action"])
+        new_keys = {r["key"] for r in new_rows}                     # 同一個指令只推一次（V 的進出場會在連續兩次執行都顯示）
+        actions = phone_rows([p for p in prompts if p["level"] == "action" and p["key"] in new_keys])
         if actions:
             owner, repo = (cfg.get("publish_repo") or "/").split("/")
             site = f"https://{owner.lower()}.github.io/{repo}/" if owner else ""
@@ -597,6 +725,10 @@ def main(offline=False, notify=True):
                 elif f["side"] == "sell" and t["exit_t"]: cands.append((t["exit_t"], t["exit_px"]))
             for o in d_orders:
                 if f["strat"] == "D" and o["px"]: cands.append((o["exec_t"], o["px"]))
+            for t in (v_out or {}).get("trades", []):
+                if f["strat"] != "V": continue
+                if f["side"] == "buy": cands.append((t["entry_t"], t["entry_px"]))
+                elif t["exit_t"]: cands.append((t["exit_t"], t["exit_px"]))
             near = [c for c in cands if abs(c[0] - rec["t"]) <= 8 * 3600]
             if near:
                 mt, mp = min(near, key=lambda c: abs(c[0] - rec["t"]))
@@ -639,6 +771,7 @@ def main(offline=False, notify=True):
             "monthly": monthly(tot_bt),
         },
         "status": status, "prompts": prompts,
+        "v": v_out or {"error": v_err},
         # 公開網站（GitHub Actions 發布）不帶操作紀錄與成交：紀錄只存在私人 repo，展示版本來也隱藏這兩區
         "log": [] if PUBLIC else log.fillna("").to_dict("records")[-200:], "fills": [] if PUBLIC else fills,
     }

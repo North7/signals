@@ -9,5 +9,9 @@
   "backtest_from": "2021-01-01",
   "notify": true,
   "red_up": false,
-  "publish_repo": "North7/signals"
+  "publish_repo": "North7/signals",
+  "v": {
+    "start": "2026-11-17",
+    "capital_usdt": 10000
+  }
 }

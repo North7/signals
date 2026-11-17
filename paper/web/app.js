@@ -51,9 +51,9 @@ function rgba(hex, a) {
 // ---------------------------------------------------------------- 顏色（隨深淺色切換）
 let C = {};
 function readColors() {
-  for (const k of ["s1", "s1b", "d", "total", "btc", "pos", "neg", "up", "down", "grid", "ink", "ink-2", "muted", "surface", "surface-3", "axis", "warning", "mid", "on-strong"])
+  for (const k of ["s1", "s1b", "d", "v", "total", "btc", "pos", "neg", "up", "down", "grid", "ink", "ink-2", "muted", "surface", "surface-3", "axis", "warning", "mid", "on-strong"])
     C[k.replace("-", "_")] = cssv("--" + k);
-  C.strat = { "S1-N20": C.s1, "S1-N30": C.s1b, D: C.d };
+  C.strat = { "S1-N20": C.s1, "S1-N30": C.s1b, D: C.d, V: C.v };
 }
 function baseOpts(extra = {}) {
   return Object.assign({
@@ -116,7 +116,7 @@ function stopLineData(strat) {
   return out;
 }
 function markerData() {
-  const show = { "S1-N20": $("shN20").checked, "S1-N30": $("shN30").checked, D: $("shD").checked };
+  const show = { "S1-N20": $("shN20").checked, "S1-N30": $("shN30").checked, D: $("shD").checked, V: $("shV").checked };
   const txt = S.markerText, out = [];
   // N20、N30 在同一根 K 線進場或出場時合成一個標記，避免標籤疊在一起
   const groups = new Map();
@@ -147,6 +147,10 @@ function markerData() {
     out.push({ time: bucket(o.exec_t), position: add ? "belowBar" : "aboveBar", color: C.d, shape: add ? "arrowUp" : "arrowDown",
                text: txt ? `D ${dAct(o)}→${pctw(o.weight_to)}` : "" });
   }
+  if (show.V && P.v && P.v.trades) for (const t of P.v.trades) {          // V：估值觀察組（日線，12:00 開盤成交）
+    out.push({ time: bucket(t.entry_t), position: "belowBar", color: C.v, shape: "arrowUp", text: txt ? "V" : "" });
+    if (t.exit_t) out.push({ time: bucket(t.exit_t), position: "aboveBar", color: C.v, shape: "arrowDown", text: txt ? `V ${pct(t.ret)}` : "" });
+  }
   const st = P.meta.start;
   if (st >= P.candles[0][0] && st <= P.meta.last_bar + H4)
     out.push({ time: bucket(Math.min(st, P.meta.last_bar)), position: "aboveBar", color: C.ink, shape: "square", text: Z("紙上交易開始", "Paper trading starts") });
@@ -163,6 +167,10 @@ function eventIndex() {
   }
   for (const o of P.d_orders) if (!o.pending) add(o.exec_t, Z(`D ${dAct(o)}：BTC 比例 ${pctw(o.weight_from)} → ${pctw(o.weight_to)} @ ${num(o.px, 1)}`,
                                                              `D ${dAct(o)}: BTC weight ${pctw(o.weight_from)} → ${pctw(o.weight_to)} @ ${num(o.px, 1)}`));
+  if (P.v && P.v.trades) for (const t of P.v.trades) {
+    add(t.entry_t, Z(`V（估值觀察組）買進 @ ${num(t.entry_px, 1)}`, `V (valuation, observation) buy @ ${num(t.entry_px, 1)}`));
+    if (t.exit_t) add(t.exit_t, Z(`V 賣出 @ ${num(t.exit_px, 1)}，${pct(t.ret)}`, `V sell @ ${num(t.exit_px, 1)}, ${pct(t.ret)}`));
+  }
   return m;
 }
 
@@ -223,7 +231,7 @@ function updateK(keepRange) {
   if (vr) k.chart.timeScale().setVisibleRange(vr); else setRange(S.range);
   const keys = $("kkeys"); keys.replaceChildren(
     keyItem(C.s1, Z("S1-N20 進出／停損", "S1-N20 entries, exits, stop"), "tri"), keyItem(C.s1b, Z("S1-N30 進出／停損", "S1-N30 entries, exits, stop"), "tri"),
-    keyItem(C.d, Z("D 加倉 ▲／減倉 ▼", "D add ▲ / reduce ▼")),
+    keyItem(C.d, Z("D 加倉 ▲／減倉 ▼", "D add ▲ / reduce ▼")), keyItem(C.v, Z("V 估值 買 ▲／賣 ▼", "V valuation buy ▲ / sell ▼"), "tri"),
     keyItem(C.ink_2, Z("200 日均線（前一日）", "200-day MA (previous day)"), "dash"), keyItem(rgba(C.s1, .55), Z("通道上緣（突破價）", "Channel high (breakout price)")));
   kLegend({});
 }
@@ -517,6 +525,19 @@ function renderStats() {
 function renderTrades() {
   const fs = $("fStrat").value, fp = $("fPhase").value;
   $("fStrat").style.display = S.tradeTab === "s1" ? "" : "none";
+  if (S.tradeTab === "v") {
+    const list = ((P.v && P.v.trades) || []).filter((t) => !fp || t.phase === fp).sort((a, b) => b.entry_t - a.entry_t);
+    $("tradeCount").textContent = Z(`${list.length} 筆（${tstr(P.v.backtest_from, false)} 起）`, `${list.length} trades (since ${tstr(P.v.backtest_from, false)})`);
+    table("tradeTable", [[Z("階段", "Phase"), true], [Z("買進（台灣）", "Buy (Taiwan)"), true], [Z("買進價", "Buy price")], [Z("賣出（台灣）", "Sell (Taiwan)"), true],
+      [Z("賣出價", "Sell price")], [Z("報酬", "Return")], [Z("持有期間最深", "Worst drawdown held")], [Z("持有（天）", "Held (days)")], [Z("狀態", "Status"), true]],
+      list.map((t) => el("tr", { class: "click", onclick: () => zoomTo(t.entry_t, t.exit_t || P.meta.last_bar) },
+        el("td", { class: "l" }, el("span", { class: "pill " + (t.phase === "paper" ? "paper" : "") }, t.phase === "paper" ? Z("紙上", "Paper") : Z("回測", "Backtest"))),
+        el("td", { class: "l" }, tstr(t.entry_t)), el("td", {}, num(t.entry_px, 1)),
+        el("td", { class: "l" }, t.exit_t ? tstr(t.exit_t) : "—"), el("td", {}, t.exit_t ? num(t.exit_px, 1) : "—"),
+        el("td", { class: cls(t.ret) }, pct(t.ret)), el("td", { class: cls(t.dip) }, pct(t.dip)), el("td", {}, t.days.toFixed(0)),
+        el("td", { class: "l" }, t.open ? el("span", { class: "pill open" }, Z("持有中", "Open")) : Z("賣出條件", "Sell rule")))));
+    return;
+  }
   if (S.tradeTab === "s1") {
     const list = P.trades.filter((t) => (!fs || t.strat === fs) && (!fp || t.phase === fp)).sort((a, b) => b.entry_t - a.entry_t);
     $("tradeCount").textContent = Z(`${list.length} 筆`, `${list.length} trades`);
@@ -593,6 +614,7 @@ function renderPrompts() {
       const done = p.key && p.key.endsWith("|entry") && P.status[p.strat] && P.status[p.strat].provisional;   // 已經開盤成交
       if (p.key && (p.key.endsWith("|entry") || p.key.endsWith("|stop")) && !done) due = P.meta.next_open;
       if (p.key && p.key.endsWith("|rebalance")) { const o = P.d_orders.find((x) => x.pending); due = o ? o.exec_t : null; }
+      if (p.strat === "V") { const x = P.status.V || {}; due = x.state === "pending" || x.state === "pending_exit" ? P.meta.next_open : null; }
       if (due) card.append(el("div", { class: "due", "data-due": String(due) }));
     }
     if (p.level === "action") {
@@ -664,7 +686,7 @@ function renderStatus() {
   const acts = P.prompts.filter((p) => p.level === "action");
   $("status").classList.toggle("act", acts.length > 0);
   if (acts.length) {
-    const ttl = (p) => { const x = st[p.strat]; return p.key && p.key.endsWith("|entry") && x && x.provisional ? Z(`${p.strat} 已進場，停損 ${num(x.stop, 1)}`, `${p.strat} entered, stop ${num(x.stop, 1)}`) : pTitle(p); };
+    const ttl = (p) => { const x = st[p.strat]; return p.strat !== "V" && p.key && p.key.endsWith("|entry") && x && x.provisional ? Z(`${p.strat} 已進場，停損 ${num(x.stop, 1)}`, `${p.strat} entered, stop ${num(x.stop, 1)}`) : pTitle(p); };
     $("statusTitle").textContent = acts.length === 1 ? ttl(acts[0]) : Z(`有 ${acts.length} 件事要處理`, `${acts.length} things to do`);
     $("statusText").replaceChildren(...acts.map((p) => el("span", {}, acts.length > 1 ? `${ttl(p)}${Z("：", ": ")}` : "", pText(p))),
       el("span", {}, el("a", { href: "#actions" }, Z("查看操作指令", "See the instructions"))));
@@ -693,6 +715,8 @@ function renderStatus() {
     parts.push([lead, ...eta.flatMap((x, i) => (i ? [Z("、", "; "), ...x] : x))]);
   }
   parts.push(Z(`D 維持 BTC ${pct(st.D.weight, 0, false)}`, `D stays at ${pct(st.D.weight, 0, false)} BTC`));
+  if (st.V) parts.push(st.V.state === "long" ? Z(`V 觀察組持有中，等賣壓累積回到 0（目前 ${num(st.V.sx, 0)}）`, `V (observation) holds until selling pressure is back to 0 (now ${num(st.V.sx, 0)})`)
+                                             : Z("V 觀察組空手，等估值條件", "V (observation) is flat, waiting for the valuation conditions"));
   const kids = [];
   parts.forEach((x, i) => kids.push(...[].concat(x), i < parts.length - 1 ? Z("；", ". ") : Z("。", ".")));
   $("statusText").replaceChildren(el("span", {}, ...kids));
@@ -788,7 +812,52 @@ function renderHero() {
         el("span", {}, "Sharpe ", el("b", {}, b.sharpe == null ? "—" : b.sharpe.toFixed(2))),
         el("span", {}, Z("最大回撤 ", "Max DD "), el("b", {}, pct(b.maxdd, 1, false)))));
   };
-  $("heroTiles").replaceChildren(...STRATS.map(tile), tile("D"));
+  $("heroTiles").replaceChildren(...STRATS.map(tile), tile("D"), ...[vTile()].filter(Boolean));
+}
+// V：估值觀察組（獨立的紙上帳戶，不算進上面的合計）
+function vTile() {
+  const v = P.v; if (!v || !v.status) return null;
+  const x = v.status, r = x.rules, b = (v.stats && v.stats.backtest) || {};
+  const started = P.meta.last_bar + H4 > x.start;
+  const chg = x.equity / x.capital - 1;
+  const kv = (k, val, c) => el("div", { class: "kv " + (c || "") }, el("span", {}, k), el("b", {}, val));
+  const dd = (t) => tstr(t, false).slice(5);
+  const met = (ok) => (ok ? " ✓" : "");
+  let pill, state;
+  const holding = x.state === "long" || x.state === "pending_exit";
+  if (x.state === "pending") {
+    pill = Z("下一根進場", "Entering next bar");
+    state = Z([`估值條件已連續 ${r.confirm} 天成立，`, el("b", {}, tstr(P.meta.next_open).slice(5)), " 開盤買進約 ", el("b", {}, num(x.btc, 5)), " BTC。"],
+      [`The valuation conditions held ${r.confirm} days; buys about `, el("b", {}, num(x.btc, 5)), " BTC at the ", el("b", {}, tstr(P.meta.next_open).slice(5)), " open."]);
+  } else if (holding) {
+    pill = x.state === "pending_exit" ? Z("下一根賣出", "Selling next bar") : Z("持倉中", "In position");
+    state = Z([`${dd(x.entry_t)} 以 `, el("b", {}, num(x.entry_px, 1)), " 買進 ", el("b", {}, num(x.btc, 5)), ` BTC，未實現 ${pct(x.unreal, 1)}；沒有停損，等賣出條件。`],
+      ["Bought ", el("b", {}, num(x.btc, 5)), " BTC at ", el("b", {}, num(x.entry_px, 1)), ` on ${dd(x.entry_t)}, unrealized ${pct(x.unreal, 1)}; no stop, waiting for the sell condition.`]);
+  } else {
+    pill = Z("空手", "Flat");
+    state = [Z("空手，等估值條件連續兩天成立才買。", "Flat until the valuation conditions hold two days in a row.")];
+  }
+  const rows = holding
+    ? [kv(Z("賣壓累積", "Selling pressure"), Z(`${num(x.sx, 0)}，需回到 ${r.sx_sell}${met(x.sx <= r.sx_sell)}`, `${num(x.sx, 0)}, needs to return to ${r.sx_sell}${met(x.sx <= r.sx_sell)}`)),
+       kv(Z("動能品質", "Momentum quality"), Z(`${x.mom.toFixed(2)}，需 > ${r.mom_sell}${met(x.mom > r.mom_sell)}`, `${x.mom.toFixed(2)}, needs > ${r.mom_sell}${met(x.mom > r.mom_sell)}`)),
+       kv(Z("連續成立", "Days met"), Z(`${x.cs} / ${r.confirm} 天`, `${x.cs} / ${r.confirm} days`))]
+    : [kv(Z("賣壓累積", "Selling pressure"), Z(`${num(x.sx, 0)}，需 ≥ ${r.sx_buy}${met(x.sx >= r.sx_buy)}`, `${num(x.sx, 0)}, needs ≥ ${r.sx_buy}${met(x.sx >= r.sx_buy)}`)),
+       kv(Z("相對未實現獲利", "Relative unrealized profit"), Z(`${x.rup.toFixed(1)}%，需 ≤ ${r.rup_th}%${met(x.rup <= r.rup_th)}`, `${x.rup.toFixed(1)}%, needs ≤ ${r.rup_th}%${met(x.rup <= r.rup_th)}`)),
+       kv(Z("連續成立", "Days met"), Z(`${x.cb} / ${r.confirm} 天`, `${x.cb} / ${r.confirm} days`))];
+  const late = x.data.rup_day < x.data.close_day;
+  const gate = el("div", { class: "gate" }, ...rows,
+    el("div", { class: "note" }, Z(`數據到 ${dd(x.day)} 收盤（價格 OKX、相對未實現獲利 Bitview）`, `Data through the ${dd(x.day)} close (price from OKX, RUP from Bitview)`)
+      + (x.data.error ? Z("；Bitview 這次抓取失敗，用上次的資料", "; Bitview fetch failed this time, using the last data") : late ? Z("；最新一天的 RUP 台灣 08:17 後才有", "; the latest day's RUP comes after 08:17 Taiwan time") : "")
+      + Z("。", ".")));
+  return el("div", { class: "card tile v" + (x.state === "pending" || x.state === "pending_exit" ? " on" : ""), style: `--c:${C.v}` },
+    el("div", { class: "name" }, el("i", { class: "dot" }), Z("V · 估值", "V · Valuation"), el("span", { class: "obs" }, Z("觀察組", "Observation")), el("span", { class: "pillstate" }, pill)),
+    el("div", { class: "big" }, num(x.equity, 2), started ? el("small", { class: cls(chg) }, pct(chg, 2)) : el("small", {}, Z(`${dd(x.start)} 起算`, `starts ${dd(x.start)}`))),
+    el("div", { class: "state" }, ...state), gate,
+    el("div", { class: "note obs-note" }, Z("獨立的 10,000 USDT 紙上帳戶，不算進上面的合計；規則沒有通過本站的隨機對照，只作觀察。",
+      "A separate 10,000 USDT paper account, not part of the total above; the rule did not pass this site's random-entry tests, so it is for observation only.")),
+    el("div", { class: "row" }, el("span", {}, Z(`回測（${tstr(v.backtest_from, false).slice(0, 4)} 起）年化 `, `Backtest (since ${tstr(v.backtest_from, false).slice(0, 4)}) CAGR `), el("b", {}, pct(b.cagr))),
+      el("span", {}, "Sharpe ", el("b", {}, b.sharpe == null ? "—" : b.sharpe.toFixed(2))),
+      el("span", {}, Z("最大回撤 ", "Max DD "), el("b", {}, pct(b.maxdd, 1, false)))));
 }
 function initSpark() {
   const ch = LC.createChart($("heroSpark"), {
@@ -959,7 +1028,7 @@ function segOn(id, attr, val) { for (const b of $(id).querySelectorAll("button")
 function bindControls() {
   $("tfSeg").onclick = (e) => { const v = e.target.dataset.tf; if (!v) return; S.tf = v; segOn("tfSeg", "tf", v); updateK(false); };
   $("rangeSeg").onclick = (e) => { const v = e.target.dataset.r; if (v == null) return; S.range = +v; segOn("rangeSeg", "r", v); setRange(S.range); };
-  for (const id of ["shN20", "shN30", "shD", "shStop", "shCh", "shMA"]) $(id).onchange = () => updateK(true);
+  for (const id of ["shN20", "shN30", "shD", "shV", "shStop", "shCh", "shMA"]) $(id).onchange = () => updateK(true);
   $("eqSeg").onclick = (e) => { const v = e.target.dataset.e; if (!v) return; S.eq = v; segOn("eqSeg", "e", v); updateEq(); };
   $("eqLog").onchange = () => updateEq();
   $("ddBtc").onchange = () => updateEq();
@@ -1000,6 +1069,13 @@ function renderIntro() {
   const perf = (b) => [item(Z("回測年化", "Backtest CAGR"), pct(b.cagr)), item("Sharpe", b.sharpe == null ? "—" : b.sharpe.toFixed(2)), item(Z("最大回撤", "Max drawdown"), pct(b.maxdd, 1, false))];
   const s1Now = STRATS.map((s) => st[s].state === "long" ? Z(`${SHORT[s]} 持倉`, `${SHORT[s]} in position`) : st[s].state === "pending" ? Z(`${SHORT[s]} 待進場`, `${SHORT[s]} entering`) : Z(`${SHORT[s]} 空手`, `${SHORT[s]} flat`)).join(Z("、", ", "));
   $("introS1").replaceChildren(item(Z("配置", "Capital"), Z(`${num(s1cap, 0)} USDT（N20、N30 各 ${num(s1cap / 2, 0)}）`, `${num(s1cap, 0)} USDT (${num(s1cap / 2, 0)} each for N20 and N30)`)), ...perf(B.S1 || {}), item(Z("目前", "Now"), s1Now));
+  if (P.v && P.v.status && $("introV")) {
+    const x = P.v.status, bv = P.v.stats.backtest || {};
+    $("introV").replaceChildren(item(Z("配置", "Capital"), Z(`${num(x.capital, 0)} USDT（獨立，不算進合計）`, `${num(x.capital, 0)} USDT (separate, not in the total)`)),
+      item(Z(`回測 ${tstr(P.v.backtest_from, false).slice(0, 4)} 起 年化`, `Backtest since ${tstr(P.v.backtest_from, false).slice(0, 4)} CAGR`), pct(bv.cagr)),
+      item("Sharpe", bv.sharpe == null ? "—" : bv.sharpe.toFixed(2)), item(Z("最大回撤", "Max drawdown"), pct(bv.maxdd, 1, false)),
+      item(Z("目前", "Now"), x.state === "long" ? Z("持有中", "in position") : x.state === "flat" ? Z("空手", "flat") : Z("下一根成交", "trading next bar")));
+  }
   $("introD").replaceChildren(item(Z("配置", "Capital"), `${num(dcap, 0)} USDT`), ...perf(B.D || {}), item(Z("目前", "Now"), Z(`持有 BTC ${pct(st.D.weight, 0, false)}`, `holding ${pct(st.D.weight, 0, false)} BTC`)));
 }
 // ---------------------------------------------------------------- 語言

@@ -69,7 +69,7 @@ class H(SimpleHTTPRequestHandler):
     def fill(self, b):
         try:
             strat = str(b["strat"]); side = str(b["side"])
-            assert strat in ("S1-N20", "S1-N30", "D"), "策略只能是 S1-N20、S1-N30、D"
+            assert strat in ("S1-N20", "S1-N30", "D", "V"), "策略只能是 S1-N20、S1-N30、D、V"
             assert side in ("buy", "sell"), "方向只能是買進或賣出"
             t = dt.datetime.fromisoformat(str(b["time"]))
             price = float(b["price"]); assert price > 0, "成交價要大於 0"
