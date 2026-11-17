@@ -107,6 +107,7 @@
       <label><input type="checkbox" id="shN20" checked><i style="background:var(--s1)"></i>S1-N20</label>
       <label><input type="checkbox" id="shN30" checked><i style="background:var(--s1b)"></i>S1-N30</label>
       <label><input type="checkbox" id="shD" checked><i style="background:var(--d)"></i><span data-en="D rebalances">D 調倉</span></label>
+      <label><input type="checkbox" id="shV" checked><i style="background:var(--v)"></i><span data-en="V valuation">V 估值</span></label>
       <label><input type="checkbox" id="shStop" checked><span data-en="Stop line">停損線</span></label>
       <label><input type="checkbox" id="shCh"><span data-en="Channel high">通道上緣</span></label>
       <label><input type="checkbox" id="shMA" checked><span data-en="200-day MA">200 日均線</span></label>
@@ -116,7 +117,7 @@
       <div id="klegend" class="legend-ov"></div>
     </div>
     <div class="keys" id="kkeys"></div>
-    <div class="sub foot" data-en="Times are Taiwan time (UTC+8). ▲ entry, ▼ exit (labeled with account P&amp;L); D ▲ add / ▼ reduce (labeled with the new BTC weight); “Paper” marks the paper-trading period. Click a trade below to jump to it.">時間為台灣時間。▲ 進場、▼ 出場（標註帳戶損益）；D ▲ 加倉／▼ 減倉（標註調整後的 BTC 比例）；「紙」= 紙上交易期間。點下方交易紀錄可跳到該筆。</div>
+    <div class="sub foot" data-en="Times are Taiwan time (UTC+8). ▲ entry, ▼ exit (labeled with account P&amp;L); D ▲ add / ▼ reduce (labeled with the new BTC weight); V ▲ buy / ▼ sell (valuation, observation); “Paper” marks the paper-trading period. Click a trade below to jump to it.">時間為台灣時間。▲ 進場、▼ 出場（標註帳戶損益）；D ▲ 加倉／▼ 減倉（標註調整後的 BTC 比例）；V ▲ 買進／▼ 賣出（估值觀察組）；「紙」= 紙上交易期間。點下方交易紀錄可跳到該筆。</div>
   </section>
 
   <section class="card fs-one" id="eqcard">
@@ -192,7 +193,7 @@
   <section class="card fs-one" id="trades">
     <div class="card-head">
       <h2 data-en="Trades">交易紀錄</h2>
-      <div class="seg" id="tradeTab"><button data-t="s1" class="on" data-en="S1 trades">S1 交易</button><button data-t="d" data-en="D rebalances">D 調倉</button></div>
+      <div class="seg" id="tradeTab"><button data-t="s1" class="on" data-en="S1 trades">S1 交易</button><button data-t="d" data-en="D rebalances">D 調倉</button><button data-t="v" data-en="V trades">V 估值</button></div>
       <select id="fStrat" aria-label="篩選策略" data-en-aria="Filter by strategy"><option value="" data-en="All strategies">全部策略</option><option>S1-N20</option><option>S1-N30</option></select>
       <select id="fPhase" aria-label="篩選階段" data-en-aria="Filter by phase"><option value="" data-en="Backtest + paper">回測＋紙上</option><option value="backtest" data-en="Backtest only">只看回測</option><option value="paper" data-en="Paper only">只看紙上</option></select>
       <span class="sub" id="tradeCount"></span>
@@ -250,6 +251,26 @@
         </ul>
         <div class="intro-stat" id="introD"></div>
       </div>
+      <div class="strat v">
+        <h3><i class="k" style="background:var(--v)"></i><span data-en="V: valuation (long only, spot) · observation group">V：估值（只做多，現貨）· 觀察組</span></h3>
+        <ul data-l="zh">
+          <li><b>買進</b>：賣壓累積到 100（≥ 99.5）<b>而且</b>相對未實現獲利（全體未實現獲利 ÷ 市值）≤ 37.5%，連續 2 天成立。賣壓累積是 Daybreak 的指標，只用每日收盤算，衡量這波下跌的賣壓累積到多滿。</li>
+          <li><b>賣出</b>：賣壓累積回到 0 <b>而且</b>動能品質 &gt; 0.85（強勢動能），連續 2 天成立。全進全出，<b>沒有停損</b>。</li>
+          <li><b>成交時點</b>：D 日的鏈上數字要到隔天台灣 08:17 後才有，所以一律在 D+1 台灣 12:00（UTC 04:00）那根 4H 開盤成交，每邊成本 0.15%。Bitview 晚到時指令會晚發，模型仍照 12:00 開盤價記帳。</li>
+          <li><b>帳戶</b>：獨立的 10,000 USDT 紙上帳戶，2026-11-17 起算，<b>不算進上面的合計</b>，也不影響 S1、D 的評估。起算時規則已經持有（11/12 買進），所以從起算那天的價格開始算。</li>
+          <li><b>為什麼只是觀察組</b>：2012 年起 9 筆全賺（D+1 收盤成交、扣成本累計 +653%、最大回撤 −41%），但沒有通過本站的隨機對照 —— 只在「相對未實現獲利 ≤ 37.5%」的日子隨便進場、抱一樣久，平均每筆 +23% 對 V 的 +27%，差距不顯著；報酬主要來自「便宜時買」。賣壓累積 2026-11 才設計、37.5% 門檻看過全部歷史才定，<b>沒有真正的樣本外</b>，真正的檢驗從上線這天開始。</li>
+          <li><b>已知風險</b>：14 年只有 9 筆、四個週期，全賺不代表以後不會虧；沒有停損，2015 年那筆進場後最深跌 36%；Bitview 偶爾回補資料，門檻邊緣的訊號可能事後改變。和 D 幾乎不相關（日報酬 0.06），V 在場時 D 大多空手。</li>
+        </ul>
+        <ul data-l="en" lang="en">
+          <li><b>Buy</b>: selling pressure reaches 100 (≥ 99.5) <b>and</b> relative unrealized profit (total unrealized profit ÷ market cap) is ≤ 37.5%, two days in a row. Selling pressure is a Daybreak indicator computed from daily closes only; it measures how saturated the selling in the current decline is.</li>
+          <li><b>Sell</b>: selling pressure is back to 0 <b>and</b> momentum quality is &gt; 0.85 (strong momentum), two days in a row. All in, all out, <b>no stop</b>.</li>
+          <li><b>Timing</b>: day D’s on-chain number only arrives after 08:17 Taiwan time the next day, so every fill is at the D+1 12:00 Taiwan (04:00 UTC) 4H open, with 0.15% cost per side. If Bitview is late the instruction goes out late, but the model still books the 12:00 open.</li>
+          <li><b>Account</b>: a separate 10,000 USDT paper account starting 2026-11-17, <b>not part of the total above</b> and not part of the S1 / D evaluation. The rule was already holding at the start (bought 11/12), so the account starts from that day’s price.</li>
+          <li><b>Why observation only</b>: 9 of 9 trades won since 2012 (D+1 close fills, after costs +653%, max drawdown −41%), but it did not pass this site’s random-entry tests: random entries on days with relative unrealized profit ≤ 37.5%, held just as long, averaged +23% a trade versus V’s +27%, not a significant gap; most of the return comes from buying when cheap. Selling pressure was designed in 2026-11 and the 37.5% threshold was set after seeing all the history, so there is <b>no true out-of-sample</b>; the real test starts the day it went live.</li>
+          <li><b>Known risks</b>: only 9 trades over 14 years and four cycles, so a perfect record does not rule out losses; no stop (the 2015 trade fell 36% after entry); Bitview sometimes revises data, so a signal near the threshold can change afterwards. Nearly uncorrelated with D (daily returns 0.06); D is mostly flat while V holds.</li>
+        </ul>
+        <div class="intro-stat" id="introV"></div>
+      </div>
     </div>
     <div class="sub intro-foot" data-en="If trading by hand, check at least every 4 hours between 08:00 and 24:00 Taiwan time (checking only once or twice a day made results clearly worse in testing). This page is a research and record-keeping tool, not investment advice; confirm price and size yourself before placing an order.">手動操作至少要在台灣時間 08–24 點每 4 小時看一次（一天只看一兩次，研究顯示結果明顯變差）。本頁是研究與紀錄工具，不是投資建議；下單前請自行確認價格與數量。</div>
   </details>
@@ -277,7 +298,7 @@
 <dialog id="dlgFill">
   <h2 data-en="Record an actual fill">記錄實際成交</h2>
   <div class="form">
-    <label for="fS" data-en="Strategy">策略</label><select id="fS"><option>S1-N20</option><option>S1-N30</option><option>D</option></select>
+    <label for="fS" data-en="Strategy">策略</label><select id="fS"><option>S1-N20</option><option>S1-N30</option><option>D</option><option>V</option></select>
     <label for="fSide" data-en="Side">方向</label><select id="fSide"><option value="buy" data-en="Buy">買進</option><option value="sell" data-en="Sell">賣出</option></select>
     <label for="fTime" data-en="Fill time">成交時間</label><input id="fTime" type="datetime-local">
     <label for="fPx" data-en="Average fill price">成交均價</label><input id="fPx" type="number" step="0.1">

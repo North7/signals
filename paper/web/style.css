@@ -16,7 +16,7 @@
   --card-border: transparent;
   --shadow: 0 1px 2px rgba(31, 36, 33, .04), 0 18px 44px rgba(31, 36, 33, .05);
   --shadow-sm: 0 1px 2px rgba(31, 36, 33, .08);
-  --s1: #2f6b5e; --s1b: #a0742c; --d: #2b4c7e; --total: #1f2421; --btc: #8a938e;
+  --s1: #2f6b5e; --s1b: #a0742c; --d: #2b4c7e; --v: #6b7330; --total: #1f2421; --btc: #8a938e;
   --pos: #2f6b5e; --neg: #a4473a; --mid: #eceeea; --on-strong: #ffffff;
   --up: #2f6b5e; --down: #8a938e;
   --good: #2f6b5e; --warning: #c08a2e; --critical: #a4473a;
@@ -42,7 +42,7 @@
   --card-border: rgba(232, 236, 232, 0.05);
   --shadow: 0 18px 44px rgba(0, 0, 0, .28);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
-  --s1: #6fbfa9; --s1b: #d4a55a; --d: #8da9e0; --total: #e8ece8; --btc: #78827d;
+  --s1: #6fbfa9; --s1b: #d4a55a; --d: #8da9e0; --v: #bcc56f; --total: #e8ece8; --btc: #78827d;
   --pos: #6fbfa9; --neg: #e0897a; --mid: #222925; --on-strong: #111513;
   --up: #6fbfa9; --down: #6b7570;
   --good: #6fbfa9; --warning: #d4a55a; --critical: #e0897a;
@@ -170,12 +170,17 @@ input[type="checkbox"] { accent-color: var(--s1); width: 15px; height: 15px; }
 .hero-spark-wrap { flex: 1.4 1 360px; min-width: 0; }
 .hero-spark-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .spark { height: 128px; width: 100%; }
-.hero-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+.hero-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }   /* 四個子帳戶：寬螢幕一排四張、中等 2×2、手機一欄 */
+@media (min-width: 1240px) { .hero-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .hero-tiles { grid-template-columns: 1fr; } }
 .tile { display: flex; flex-direction: column; gap: 10px; padding: 24px 26px; }
 .tile.watch, .tile.on { box-shadow: inset 0 0 0 1.5px var(--c), var(--shadow); }
 .tile .name { display: flex; align-items: center; gap: 10px; font-weight: 500; }
 .tile .name .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex: none; }
 .tile .name .pillstate { margin-left: auto; }
+.tile .name .obs { font-size: 11px; font-weight: 500; padding: 1px 8px; border-radius: 999px; border: 1px dashed color-mix(in srgb, var(--c) 70%, transparent); color: var(--c); }
+.tile .obs-note { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.tile.v .pillstate { background: color-mix(in srgb, var(--c) 13%, transparent); color: var(--c); }
 .tile .big { font-size: 34px; font-weight: 300; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .tile .big small { font-size: 14px; margin-left: 8px; letter-spacing: 0; font-weight: 500; }
 .tile .state { font-size: 14px; color: var(--ink-2); }
@@ -283,6 +288,7 @@ tbody tr.click { cursor: pointer; }
 .intro-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 16px; }
 @media (max-width: 900px) { .intro-grid { grid-template-columns: 1fr; } }
 .intro .strat { border-radius: 20px; padding: 16px 20px; background: var(--surface-2); }
+.intro .strat.v { grid-column: 1 / -1; }                     /* V 是獨立的觀察組，放在 S1、D 下面一整列 */
 .intro h3 { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
 .intro h3 .k { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .intro ul { margin: 6px 0 10px; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; }
